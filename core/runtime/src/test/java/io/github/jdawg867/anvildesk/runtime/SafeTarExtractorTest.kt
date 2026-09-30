@@ -8,6 +8,7 @@ import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
 import org.apache.commons.compress.archivers.tar.TarConstants
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -36,6 +37,46 @@ class SafeTarExtractorTest {
             assertTrue(extracted.canExecute())
             assertEquals(1, result.entriesExtracted)
             assertEquals(extracted.length(), result.regularFileBytes)
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun hardLinkIsMaterializedAsRegularFileCopy() {
+        val workspace = Files.createTempDirectory("anvildesk-extract-test").toFile()
+        try {
+            val archive = File(workspace, "rootfs.tar.gz")
+            val root = File(workspace, "root")
+            val perlBytes = "fake-perl-binary".toByteArray()
+
+            createArchive(archive) { tar ->
+                val perl = TarArchiveEntry("usr/bin/perl").apply {
+                    size = perlBytes.size.toLong()
+                    mode = 0x1ed // 0755
+                }
+                tar.putArchiveEntry(perl)
+                tar.write(perlBytes)
+                tar.closeArchiveEntry()
+
+                val versionedPerl = TarArchiveEntry("usr/bin/perl5.38.2", TarConstants.LF_LINK).apply {
+                    linkName = "usr/bin/perl"
+                }
+                tar.putArchiveEntry(versionedPerl)
+                tar.closeArchiveEntry()
+            }
+
+            val result = SafeTarExtractor.extract(archive, root)
+            val perl = File(root, "usr/bin/perl").toPath()
+            val versionedPerl = File(root, "usr/bin/perl5.38.2").toPath()
+
+            assertTrue(Files.isRegularFile(perl))
+            assertTrue(Files.isRegularFile(versionedPerl))
+            assertFalse(Files.isSymbolicLink(versionedPerl))
+            assertFalse(Files.isSameFile(perl, versionedPerl))
+            assertTrue(Files.readAllBytes(perl).contentEquals(Files.readAllBytes(versionedPerl)))
+            assertTrue(versionedPerl.toFile().canExecute())
+            assertEquals((perlBytes.size * 2).toLong(), result.regularFileBytes)
         } finally {
             workspace.deleteRecursively()
         }

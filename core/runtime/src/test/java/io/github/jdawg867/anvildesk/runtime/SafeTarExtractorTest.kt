@@ -41,8 +41,36 @@ class SafeTarExtractorTest {
         }
     }
 
+    @Test
+    fun rootfsAbsoluteSymlinkIsRewrittenInsideExtractionRoot() {
+        val workspace = Files.createTempDirectory("anvildesk-extract-test").toFile()
+        try {
+            val archive = File(workspace, "rootfs.tar.gz")
+            val root = File(workspace, "root")
+            createArchive(archive) { tar ->
+                val entry = TarArchiveEntry("etc/mtab", TarConstants.LF_SYMLINK).apply {
+                    linkName = "/proc/mounts"
+                }
+                tar.putArchiveEntry(entry)
+                tar.closeArchiveEntry()
+            }
+
+            SafeTarExtractor.extract(archive, root)
+
+            val link = File(root, "etc/mtab").toPath()
+            assertTrue(Files.isSymbolicLink(link))
+            assertEquals("../proc/mounts", Files.readSymbolicLink(link).toString())
+            assertEquals(
+                File(root, "proc/mounts").toPath().toAbsolutePath().normalize(),
+                link.parent.resolve(Files.readSymbolicLink(link)).normalize(),
+            )
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
     @Test(expected = IllegalArgumentException::class)
-    fun rejectsSymlinkTargetThatEscapesRoot() {
+    fun rejectsRelativeSymlinkTargetThatEscapesRoot() {
         val workspace = Files.createTempDirectory("anvildesk-extract-test").toFile()
         try {
             val archive = File(workspace, "rootfs.tar.gz")
@@ -50,6 +78,26 @@ class SafeTarExtractorTest {
             createArchive(archive) { tar ->
                 val entry = TarArchiveEntry("usr/bin/escape", TarConstants.LF_SYMLINK).apply {
                     linkName = "../../../outside"
+                }
+                tar.putArchiveEntry(entry)
+                tar.closeArchiveEntry()
+            }
+
+            SafeTarExtractor.extract(archive, root)
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsDoubleSlashAbsoluteSymlinkTarget() {
+        val workspace = Files.createTempDirectory("anvildesk-extract-test").toFile()
+        try {
+            val archive = File(workspace, "rootfs.tar.gz")
+            val root = File(workspace, "root")
+            createArchive(archive) { tar ->
+                val entry = TarArchiveEntry("etc/escape", TarConstants.LF_SYMLINK).apply {
+                    linkName = "//outside/path"
                 }
                 tar.putArchiveEntry(entry)
                 tar.closeArchiveEntry()

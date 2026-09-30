@@ -137,14 +137,27 @@ object SafeTarExtractor {
         require(linkName.isNotBlank()) { "Symbolic-link target must not be blank" }
         require('\u0000' !in linkName) { "Symbolic-link target contains NUL" }
         require('\\' !in linkName) { "Symbolic-link target contains a backslash" }
-        require(!linkName.startsWith('/')) { "Absolute symbolic-link targets are not allowed" }
+        require(!Regex("^[A-Za-z]:").containsMatchIn(linkName)) {
+            "Drive-qualified symbolic-link targets are not allowed"
+        }
+        require(!linkName.startsWith("//")) { "Double-slash symbolic-link targets are not allowed" }
 
-        val target = Paths.get(linkName).normalize()
-        require(!target.isAbsolute) { "Absolute symbolic-link targets are not allowed" }
-        val resolvedTarget = destination.parent.resolve(target).normalize()
-        require(resolvedTarget.startsWith(root)) { "Symbolic-link target escapes extraction root" }
+        val safeTarget = if (linkName.startsWith('/')) {
+            val rootRelative = Paths.get(linkName.removePrefix("/")).normalize()
+            require(!rootRelative.isAbsolute) { "Invalid rootfs-absolute symbolic-link target" }
+            require(!rootRelative.startsWith("..")) { "Symbolic-link target escapes extraction root" }
+            val resolvedTarget = root.resolve(rootRelative).normalize()
+            require(resolvedTarget.startsWith(root)) { "Symbolic-link target escapes extraction root" }
+            destination.parent.relativize(resolvedTarget)
+        } else {
+            val relativeTarget = Paths.get(linkName).normalize()
+            require(!relativeTarget.isAbsolute) { "Absolute symbolic-link target is invalid" }
+            val resolvedTarget = destination.parent.resolve(relativeTarget).normalize()
+            require(resolvedTarget.startsWith(root)) { "Symbolic-link target escapes extraction root" }
+            relativeTarget
+        }
 
-        Files.createSymbolicLink(destination, target)
+        Files.createSymbolicLink(destination, safeTarget)
     }
 
     private fun extractRegularFile(

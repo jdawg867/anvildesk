@@ -9,7 +9,8 @@ TALLOC_SRC="${THIRD_PARTY_ROOT}/samba/lib/talloc"
 TALLOC_STUB="${PROOT_SRC}/lib/talloc"
 
 NDK_VERSION="27.2.12479018"
-NDK_ROOT="${ANDROID_NDK_ROOT:-${ANDROID_HOME:-}/ndk/${NDK_VERSION}}"
+: "${ANDROID_HOME:?ANDROID_HOME must point to the Android SDK}"
+NDK_ROOT="${ANVILDESK_NDK_ROOT:-${ANDROID_HOME}/ndk/${NDK_VERSION}}"
 API_LEVEL=28
 TRIPLE="aarch64-linux-android"
 
@@ -27,6 +28,8 @@ if [[ ! -d "$NDK_ROOT" ]]; then
     exit 1
 fi
 
+echo "Using pinned Android NDK: ${NDK_ROOT}"
+
 TOOLCHAIN="${NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64"
 BIN="${TOOLCHAIN}/bin"
 SYSROOT="${TOOLCHAIN}/sysroot"
@@ -36,10 +39,11 @@ RANLIB="${BIN}/llvm-ranlib"
 STRIP="${BIN}/llvm-strip"
 OBJCOPY="${BIN}/llvm-objcopy"
 OBJDUMP="${BIN}/llvm-objdump"
-READELF="${BIN}/llvm-readelf"
+READELF="$(command -v readelf)"
+FILE_TOOL="$(command -v file)"
 
-for tool in "$CC" "$AR" "$RANLIB" "$STRIP" "$OBJCOPY" "$OBJDUMP" "$READELF"; do
-    [[ -x "$tool" ]] || { echo "Required NDK tool missing: $tool" >&2; exit 1; }
+for tool in "$CC" "$AR" "$RANLIB" "$STRIP" "$OBJCOPY" "$OBJDUMP" "$READELF" "$FILE_TOOL"; do
+    [[ -x "$tool" ]] || { echo "Required build tool missing: $tool" >&2; exit 1; }
 done
 
 rm -rf "$WORK_DIR" "$JNI_ROOT" "$PROVENANCE_DIR"
@@ -48,6 +52,7 @@ mkdir -p "$WORK_DIR" "$JNI_DIR" "$PROVENANCE_DIR"
 TALLOC_BUILD="${WORK_DIR}/talloc"
 mkdir -p "$TALLOC_BUILD"
 
+echo "Building pinned talloc source..."
 "$CC" \
     --sysroot="$SYSROOT" \
     -I"$TALLOC_STUB" \
@@ -61,6 +66,7 @@ mkdir -p "$TALLOC_BUILD"
 "$AR" rcs "${TALLOC_BUILD}/libtalloc.a" "${TALLOC_BUILD}/talloc.o"
 "$RANLIB" "${TALLOC_BUILD}/libtalloc.a"
 
+echo "Building pinned PRoot source..."
 pushd "${PROOT_SRC}/src" >/dev/null
 make -f GNUmakefile clean >/dev/null 2>&1 || true
 make -f GNUmakefile \
@@ -79,17 +85,23 @@ LOADER_BINARY="${PROOT_SRC}/src/loader/loader"
 [[ -f "$PROOT_BINARY" ]] || { echo "PRoot build output missing" >&2; exit 1; }
 [[ -f "$LOADER_BINARY" ]] || { echo "PRoot loader build output missing" >&2; exit 1; }
 
+echo "Native link complete; applying Android TLS alignment check..."
 fix_tls_alignment() {
     local binary="$1"
     local align_hex
-    align_hex="$($READELF -W -l "$binary" | awk '/^[[:space:]]*TLS/{print $NF; exit}' | sed 's/^0x//')"
-    [[ -n "$align_hex" ]] || return 0
-
-    local align=$((16#$align_hex))
-    if (( align >= 64 )); then
+    align_hex="$($READELF -W -l "$binary" 2>/dev/null | awk '/^[[:space:]]*TLS/{print $NF; exit}' | sed 's/^0x//')"
+    if [[ -z "$align_hex" ]]; then
+        echo "No TLS segment in $(basename "$binary"); no TLS fix needed"
         return 0
     fi
 
+    local align=$((16#$align_hex))
+    if (( align >= 64 )); then
+        echo "TLS alignment in $(basename "$binary"): ${align} bytes (OK)"
+        return 0
+    fi
+
+    echo "Adjusting TLS alignment in $(basename "$binary"): ${align} -> 64 bytes"
     python3 - "$binary" <<'PY'
 import struct
 import sys
@@ -121,34 +133,39 @@ PY
 
 fix_tls_alignment "$PROOT_BINARY"
 
+echo "Staging generated native payloads..."
 install -m 0755 "$PROOT_BINARY" "${JNI_DIR}/libanvildesk-proot.so"
 install -m 0755 "$LOADER_BINARY" "${JNI_DIR}/libanvildesk-proot-loader.so"
 
 verify_elf() {
-    local file="$1"
+    local elf="$1"
     local header
-    header="$(file "$file")"
+    header="$($FILE_TOOL "$elf")"
     echo "$header"
     grep -q "ELF 64-bit" <<<"$header"
-    grep -Eq "ARM aarch64|aarch64" <<<"$header"
+    grep -Eqi "ARM aarch64|aarch64" <<<"$header"
 
-    "$READELF" -h "$file" | grep -q "Machine:.*AArch64"
-    if "$READELF" -d "$file" 2>/dev/null | grep -q "NEEDED"; then
-        echo "Unexpected dynamic dependency in $file" >&2
-        "$READELF" -d "$file" >&2
+    "$READELF" -h "$elf" | grep -q "Machine:.*AArch64"
+    if "$READELF" -d "$elf" 2>/dev/null | grep -q "NEEDED"; then
+        echo "Unexpected dynamic dependency in $elf" >&2
+        "$READELF" -d "$elf" >&2
         exit 1
     fi
 
+    local found_load=false
     while read -r align; do
         [[ -z "$align" ]] && continue
+        found_load=true
         local value=$((align))
         if (( value < 16384 )); then
-            echo "LOAD segment alignment below 16 KiB in $file: $align" >&2
+            echo "LOAD segment alignment below 16 KiB in $elf: $align" >&2
             exit 1
         fi
-    done < <("$READELF" -W -l "$file" | awk '/^[[:space:]]*LOAD/{print $NF}')
+    done < <("$READELF" -W -l "$elf" | awk '/^[[:space:]]*LOAD/{print $NF}')
+    $found_load || { echo "No LOAD segments found in $elf" >&2; exit 1; }
 }
 
+echo "Verifying generated ELF payloads..."
 verify_elf "${JNI_DIR}/libanvildesk-proot.so"
 verify_elf "${JNI_DIR}/libanvildesk-proot-loader.so"
 

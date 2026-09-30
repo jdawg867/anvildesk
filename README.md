@@ -20,7 +20,7 @@ It deliberately does **not** download a Linux rootfs or execute arbitrary privil
 
 ## Principles
 
-- Current Android target SDK; no deliberate legacy-target security bypass.
+- Current stable Android SDK baseline; no deliberate legacy-target security bypass.
 - Rootless operation is the preferred default path.
 - Root support is explicit and narrowly scoped.
 - HTTPS-only artifact acquisition.
@@ -33,8 +33,10 @@ It deliberately does **not** download a Linux rootfs or execute arbitrary privil
 
 - ARM64 first (`arm64-v8a` / `aarch64`).
 - Minimum Android 9 / API 28 for the early development baseline.
-- Target Android 17 / API 37.
+- Compile/target Android 16 / API 36, the current stable SDK platform available through the standard SDK channel.
 - Application ID: `io.github.jdawg867.anvildesk`.
+
+AGP 9.4 can support API 37, but AnvilDesk will not move its compile/target baseline to API 37 until the corresponding stable SDK platform is generally available through standard `sdkmanager` installations and CI.
 
 ## Repository layout
 

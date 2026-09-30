@@ -3,12 +3,14 @@
 ## Toolchain baseline
 
 - JDK 17
-- Android SDK Platform 37
-- Android SDK Build Tools 36.0.0 or newer compatible version
+- Android SDK Platform 36 (Android 16)
+- Android SDK Build Tools 36.0.0
 - Gradle 9.6.0
 - Android Gradle Plugin 9.4.0
 
 AGP 9 uses built-in Kotlin support; the project intentionally does not apply the legacy `org.jetbrains.kotlin.android` plugin.
+
+AGP 9.4 supports API levels through 37, but API 36 is the project compile/target baseline because it is the current stable SDK platform published through the standard Android SDK channel. API 37 will be adopted when its stable platform package is generally resolvable by `sdkmanager` and CI.
 
 ## Initial build
 

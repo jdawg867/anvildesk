@@ -4,7 +4,7 @@ plugins {
 
 android {
     namespace = "io.github.jdawg867.anvildesk.runtime"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 28

@@ -6,7 +6,7 @@ Prove that AnvilDesk can identify a supported Android device and, when the user 
 
 ## Exit criteria
 
-- App builds for API 37 and installs on an ARM64 Android device.
+- App builds against the stable Android 16 / API 36 SDK and installs on an ARM64 Android device.
 - Device model, API level, primary ABI, and ARM64 capability are displayed.
 - Root presence detection does not itself invoke `su`.
 - Root verification only runs after a user action.
@@ -14,7 +14,7 @@ Prove that AnvilDesk can identify a supported Android device and, when the user 
 - No Linux rootfs is downloaded in this milestone.
 - No arbitrary root shell command interface exists.
 - Unit tests cover ABI and root uid parsing.
-- CI produces a debug APK from source.
+- CI produces a downloadable debug APK from source.
 
 ## Next milestone
 

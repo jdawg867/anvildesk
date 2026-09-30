@@ -59,7 +59,7 @@ fetch_exact_commit \
     "${DEST_ROOT}/samba" \
     lib/talloc
 
-test -f "${DEST_ROOT}/pr/src/proot/src/Makefile"
+test -f "${DEST_ROOT}/pr/src/proot/src/GNUmakefile"
 test -f "${DEST_ROOT}/pr/src/proot/src/loader/loader.c"
 test -f "${DEST_ROOT}/pr/LICENSE"
 test -f "${DEST_ROOT}/samba/lib/talloc/talloc.c"

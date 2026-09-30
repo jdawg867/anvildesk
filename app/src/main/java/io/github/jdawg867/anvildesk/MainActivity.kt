@@ -50,14 +50,22 @@ class MainActivity : Activity() {
         content.addView(deviceText)
 
         val rootStatus = TextView(this).apply {
-            text = "Root has not been requested."
+            text = if (snapshot.rootCandidateDetected) {
+                "Root binary detected. Root has not been requested."
+            } else {
+                "No root binary detected. Root verification is unavailable on this device."
+            }
             textSize = 16f
             setPadding(0, (24 * density).toInt(), 0, (12 * density).toInt())
         }
         content.addView(rootStatus)
 
         val verifyRootButton = Button(this).apply {
-            text = "Verify root access"
+            text = if (snapshot.rootCandidateDetected) {
+                "Verify root access"
+            } else {
+                "Root verification unavailable"
+            }
             isEnabled = snapshot.rootCandidateDetected
             setOnClickListener {
                 isEnabled = false

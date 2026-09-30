@@ -13,7 +13,9 @@ Milestone 2 establishes a secure acquisition and installation path for an ARM64 
 7. Extraction occurs only into a fresh app-private staging directory.
 8. Archive paths and link targets are constrained to the staging root.
 9. Entry count and uncompressed byte limits reduce archive-bomb risk.
-10. Only after successful extraction and metadata persistence may staging become the installed rootfs.
+10. An install record is written and fsynced inside staging.
+11. The staging root and its metadata are promoted together with an atomic same-filesystem rename.
+12. Failed installs delete their staging tree without following symbolic links and cannot replace an existing installed rootfs.
 
 ## Initial rootfs
 

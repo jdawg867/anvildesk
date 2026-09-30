@@ -1,0 +1,50 @@
+name: Bug report
+description: Report a reproducible AnvilDesk problem
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for helping improve AnvilDesk. Do not include passwords, private keys, or sensitive root-manager logs.
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      placeholder: Pixel 9 Pro Fold
+    validations:
+      required: true
+  - type: input
+    id: android
+    attributes:
+      label: Android version / API level
+    validations:
+      required: true
+  - type: dropdown
+    id: root
+    attributes:
+      label: Root state
+      options:
+        - Not rooted
+        - Magisk
+        - KernelSU
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true

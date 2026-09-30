@@ -24,6 +24,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Verify pinned rootless runtime sources
+        run: bash scripts/fetch-rootless-runtime-source.sh
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:

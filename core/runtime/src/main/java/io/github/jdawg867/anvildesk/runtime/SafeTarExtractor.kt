@@ -75,14 +75,12 @@ object SafeTarExtractor {
             }
         }
 
-        pendingHardLinks.forEach { (destination, target) ->
-            ensureSafeParents(root, destination.parent)
-            require(target.startsWith(root)) { "Hard-link target escapes extraction root" }
-            require(Files.exists(target, LinkOption.NOFOLLOW_LINKS)) { "Hard-link target does not exist" }
-            require(!Files.isSymbolicLink(target)) { "Hard-link target must not be a symbolic link" }
-            require(!Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) { "Duplicate archive entry" }
-            Files.createLink(destination, target)
-        }
+        regularBytes = materializeHardLinksAsCopies(
+            root = root,
+            pendingHardLinks = pendingHardLinks,
+            bytesBeforeLinks = regularBytes,
+            maxBytes = maxBytes,
+        )
 
         return RootfsExtractionResult(entries, regularBytes, skippedSpecial)
     }
@@ -158,6 +156,60 @@ object SafeTarExtractor {
         }
 
         Files.createSymbolicLink(destination, safeTarget)
+    }
+
+    private fun materializeHardLinksAsCopies(
+        root: Path,
+        pendingHardLinks: List<Pair<Path, Path>>,
+        bytesBeforeLinks: Long,
+        maxBytes: Long,
+    ): Long {
+        var totalBytes = bytesBeforeLinks
+        val remaining = pendingHardLinks.toMutableList()
+
+        // Android app-data SELinux policy can reject link(2) even when both files are
+        // owned by the app. A rootfs tar hard link is therefore materialized as a
+        // separate regular-file copy. The file contents and POSIX mode are preserved;
+        // inode identity/link count are intentionally not preserved.
+        while (remaining.isNotEmpty()) {
+            var madeProgress = false
+            val iterator = remaining.iterator()
+
+            while (iterator.hasNext()) {
+                val (destination, target) = iterator.next()
+                ensureSafeParents(root, destination.parent)
+                require(destination.startsWith(root)) { "Hard-link destination escapes extraction root" }
+                require(target.startsWith(root)) { "Hard-link target escapes extraction root" }
+                require(!Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) { "Duplicate archive entry" }
+
+                if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                    continue
+                }
+
+                require(!Files.isSymbolicLink(target)) { "Hard-link target must not be a symbolic link" }
+                require(Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
+                    "Hard-link target must be a regular file"
+                }
+
+                val targetSize = Files.size(target)
+                require(totalBytes <= maxBytes - targetSize) { "Rootfs exceeds extraction size limit" }
+
+                Files.copy(target, destination)
+                Files.setPosixFilePermissions(
+                    destination,
+                    Files.getPosixFilePermissions(target, LinkOption.NOFOLLOW_LINKS),
+                )
+                totalBytes += targetSize
+                iterator.remove()
+                madeProgress = true
+            }
+
+            require(madeProgress) {
+                "Hard-link target does not exist or hard-link cycle detected"
+            }
+        }
+
+        return totalBytes
     }
 
     private fun extractRegularFile(

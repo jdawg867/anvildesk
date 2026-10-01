@@ -3,6 +3,8 @@ package io.github.jdawg867.anvildesk.runtime
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
+import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
@@ -67,6 +69,7 @@ object RootlessRuntimePlanner {
     const val LOADER_LIBRARY = "libanvildesk-proot-loader.so"
     const val GUEST_UNAME = "/usr/bin/uname"
     const val GUEST_SHELL = "/bin/sh"
+    const val GUEST_APT_GET = "/usr/bin/apt-get"
 
     private const val GUEST_ID = "/usr/bin/id"
     private const val GUEST_CAT = "/usr/bin/cat"
@@ -92,7 +95,7 @@ object RootlessRuntimePlanner {
         nativeLibraryDirectory: File,
         hostTempDirectory: File,
     ): RootlessRuntimeInvocation {
-        val runtime = requireRuntime(rootfs, nativeLibraryDirectory, hostTempDirectory)
+        val runtime = requireRuntime(rootfs, nativeLibraryDirectory, hostTempDirectory, "Verified rootfs")
         val guestUname = File(rootfs, GUEST_UNAME.removePrefix("/"))
         require(guestUname.isFile) { "Ubuntu uname binary is missing" }
 
@@ -109,7 +112,7 @@ object RootlessRuntimePlanner {
         sessionHomeDirectory: File,
         sessionTempDirectory: File,
     ): RootlessRuntimeInvocation {
-        val runtime = requireRuntime(rootfs, nativeLibraryDirectory, hostTempDirectory)
+        val runtime = requireRuntime(rootfs, nativeLibraryDirectory, hostTempDirectory, "Verified rootfs")
         requirePlainDirectory(sessionHomeDirectory, "Managed session home")
         requirePlainDirectory(sessionTempDirectory, "Managed session temp")
 
@@ -135,6 +138,54 @@ object RootlessRuntimePlanner {
         )
     }
 
+    fun packageIndexRefresh(
+        mutableRootfs: File,
+        nativeLibraryDirectory: File,
+        hostTempDirectory: File,
+        sessionHomeDirectory: File,
+        sessionTempDirectory: File,
+        managedResolvConf: File,
+    ): RootlessRuntimeInvocation {
+        val runtime = requireRuntime(
+            mutableRootfs,
+            nativeLibraryDirectory,
+            hostTempDirectory,
+            "Mutable runtime rootfs",
+        )
+        requirePlainDirectory(sessionHomeDirectory, "Managed session home")
+        requirePlainDirectory(sessionTempDirectory, "Managed session temp")
+        requirePlainFile(managedResolvConf, "Managed resolv.conf")
+        require(File(mutableRootfs, GUEST_APT_GET.removePrefix("/")).isFile) {
+            "Ubuntu apt-get binary is missing from mutable runtime"
+        }
+
+        val binds = listOf(
+            "--bind=${sessionHomeDirectory.absolutePath}:/root!",
+            "--bind=${sessionTempDirectory.absolutePath}:/tmp!",
+            "--bind=${managedResolvConf.absolutePath}:/etc/resolv.conf!",
+            "--bind=/dev/null:/dev/null!",
+            "--bind=/dev/urandom:/dev/urandom!",
+            "--bind=/dev/random:/dev/random!",
+        )
+
+        val environment = LinkedHashMap(guestEnvironment(runtime.loader, hostTempDirectory)).apply {
+            put("DEBIAN_FRONTEND", "noninteractive")
+            put("APT_LISTCHANGES_FRONTEND", "none")
+        }
+
+        return RootlessRuntimeInvocation(
+            command = baseCommand(runtime, mutableRootfs, "/root") + binds + listOf(
+                GUEST_APT_GET,
+                "-o",
+                "Acquire::Retries=2",
+                "-o",
+                "APT::Color=0",
+                "update",
+            ),
+            environment = environment,
+        )
+    }
+
     private data class RuntimeFiles(
         val proot: File,
         val loader: File,
@@ -144,8 +195,9 @@ object RootlessRuntimePlanner {
         rootfs: File,
         nativeLibraryDirectory: File,
         hostTempDirectory: File,
+        rootfsLabel: String,
     ): RuntimeFiles {
-        requirePlainDirectory(rootfs, "Verified rootfs")
+        requirePlainDirectory(rootfs, rootfsLabel)
         requirePlainDirectory(nativeLibraryDirectory, "Native library")
         requirePlainDirectory(hostTempDirectory, "Rootless runtime temp")
 
@@ -158,7 +210,12 @@ object RootlessRuntimePlanner {
 
     private fun requirePlainDirectory(directory: File, label: String) {
         require(directory.isDirectory) { "$label directory is missing" }
-        require(!java.nio.file.Files.isSymbolicLink(directory.toPath())) { "$label directory must not be a symlink" }
+        require(!Files.isSymbolicLink(directory.toPath())) { "$label directory must not be a symlink" }
+    }
+
+    private fun requirePlainFile(file: File, label: String) {
+        require(file.isFile) { "$label file is missing" }
+        require(!Files.isSymbolicLink(file.toPath())) { "$label file must not be a symlink" }
     }
 
     private fun baseCommand(
@@ -197,12 +254,13 @@ class RootlessRuntimeLauncher(
     private val nativeLibraryDirectory: File,
     private val appCacheDirectory: File,
     private val sessionDataDirectory: File? = null,
+    private val mutableRuntimeStore: MutableRuntimeStore? = null,
 ) {
     fun runUbuntuSmokeTest(
         manifest: RootfsManifest,
         timeoutMillis: Long = 10_000L,
     ): RootlessRuntimeResult {
-        validateTimeout(timeoutMillis)
+        validateInteractiveTimeout(timeoutMillis)
         val rootfs = verifiedRootfs(manifest)
         val runtimeTemp = ensurePlainDirectory(File(appCacheDirectory, "rootless-runtime"))
         val invocation = RootlessRuntimePlanner.smokeTest(
@@ -217,11 +275,10 @@ class RootlessRuntimeLauncher(
         manifest: RootfsManifest,
         timeoutMillis: Long = 15_000L,
     ): RootlessRuntimeResult {
-        validateTimeout(timeoutMillis)
+        validateInteractiveTimeout(timeoutMillis)
         val rootfs = verifiedRootfs(manifest)
         val runtimeTemp = ensurePlainDirectory(File(appCacheDirectory, "rootless-runtime"))
-        val sessionRoot = sessionDataDirectory
-            ?: throw IllegalStateException("Managed session data directory is not configured")
+        val sessionRoot = requireSessionDataDirectory()
         val home = ensurePlainDirectory(File(sessionRoot, "home"))
         val temp = ensurePlainDirectory(File(sessionRoot, "tmp"))
 
@@ -231,6 +288,51 @@ class RootlessRuntimeLauncher(
             hostTempDirectory = runtimeTemp,
             sessionHomeDirectory = home,
             sessionTempDirectory = temp,
+        )
+        return execute(invocation, timeoutMillis)
+    }
+
+    fun currentMutableRuntimeRecord(manifest: RootfsManifest): MutableRuntimeRecord? {
+        verifiedRootfs(manifest)
+        return requireMutableRuntimeStore().currentRecord(manifest.id)?.also {
+            requireMutableRecordMatchesManifest(it, manifest)
+        }
+    }
+
+    fun ensureMutablePackageRuntime(manifest: RootfsManifest): MutableRuntimeRecord {
+        val verifiedRoot = verifiedRootfs(manifest)
+        return requireMutableRuntimeStore().ensureFromVerified(manifest, verifiedRoot)
+    }
+
+    fun runPackageIndexRefresh(
+        manifest: RootfsManifest,
+        dnsServers: List<String>,
+        timeoutMillis: Long = 180_000L,
+    ): RootlessRuntimeResult {
+        require(timeoutMillis in 10_000L..300_000L) {
+            "Package runtime timeout must be between 10 and 300 seconds"
+        }
+        val mutableStore = requireMutableRuntimeStore()
+        val verifiedRoot = verifiedRootfs(manifest)
+        val record = mutableStore.ensureFromVerified(manifest, verifiedRoot)
+        requireMutableRecordMatchesManifest(record, manifest)
+        val mutableRoot = mutableStore.runtimeRoot(manifest.id)
+        preparePackageBindTargets(mutableRoot)
+
+        val runtimeTemp = ensurePlainDirectory(File(appCacheDirectory, "rootless-runtime"))
+        val sessionRoot = requireSessionDataDirectory()
+        val home = ensurePlainDirectory(File(sessionRoot, "home"))
+        val temp = ensurePlainDirectory(File(sessionRoot, "tmp"))
+        val network = ensurePlainDirectory(File(sessionRoot, "network"))
+        val resolvConf = ManagedGuestDns.write(File(network, "resolv.conf"), dnsServers)
+
+        val invocation = RootlessRuntimePlanner.packageIndexRefresh(
+            mutableRootfs = mutableRoot,
+            nativeLibraryDirectory = nativeLibraryDirectory,
+            hostTempDirectory = runtimeTemp,
+            sessionHomeDirectory = home,
+            sessionTempDirectory = temp,
+            managedResolvConf = resolvConf,
         )
         return execute(invocation, timeoutMillis)
     }
@@ -246,10 +348,40 @@ class RootlessRuntimeLauncher(
         return store.installedRoot(manifest.id)
     }
 
+    private fun requireMutableRecordMatchesManifest(record: MutableRuntimeRecord, manifest: RootfsManifest) {
+        require(record.baseManifestId == manifest.id) { "Mutable runtime base manifest id does not match" }
+        require(record.baseSha256 == manifest.sha256) { "Mutable runtime base digest does not match" }
+        require(record.baseVersion == manifest.version) { "Mutable runtime base version does not match" }
+        require(record.baseArchitecture == manifest.architecture) {
+            "Mutable runtime base architecture does not match"
+        }
+    }
+
+    private fun preparePackageBindTargets(rootfs: File) {
+        val dev = ensurePlainDirectory(File(rootfs, "dev"))
+        listOf("null", "urandom", "random").forEach { name ->
+            val target = File(dev, name)
+            val path = target.toPath()
+            if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
+                require(!Files.isSymbolicLink(path)) { "Mutable runtime /dev/$name target must not be a symlink" }
+                require(target.isFile) { "Mutable runtime /dev/$name target is not a file" }
+            } else {
+                require(target.createNewFile()) { "Could not create mutable runtime /dev/$name bind target" }
+            }
+        }
+    }
+
+    private fun requireSessionDataDirectory(): File = sessionDataDirectory
+        ?: throw IllegalStateException("Managed session data directory is not configured")
+
+    private fun requireMutableRuntimeStore(): MutableRuntimeStore = mutableRuntimeStore
+        ?: throw IllegalStateException("Mutable runtime store is not configured")
+
     private fun ensurePlainDirectory(directory: File): File {
-        if (directory.exists()) {
+        val path = directory.toPath()
+        if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
             require(directory.isDirectory) { "Managed runtime path is not a directory: ${directory.absolutePath}" }
-            require(!java.nio.file.Files.isSymbolicLink(directory.toPath())) {
+            require(!Files.isSymbolicLink(path)) {
                 "Managed runtime directory must not be a symlink: ${directory.absolutePath}"
             }
         } else {
@@ -258,7 +390,7 @@ class RootlessRuntimeLauncher(
         return directory
     }
 
-    private fun validateTimeout(timeoutMillis: Long) {
+    private fun validateInteractiveTimeout(timeoutMillis: Long) {
         require(timeoutMillis in 1_000L..60_000L) {
             "Rootless runtime timeout must be between 1 and 60 seconds"
         }

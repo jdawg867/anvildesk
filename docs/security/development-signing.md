@@ -12,6 +12,12 @@ Public SHA-256 certificate fingerprint:
 
 This fingerprint is public metadata and is the value CI must match before publishing a device-upgrade APK.
 
+## CI validation status
+
+Stable-signed CI build 1 passed on workflow run #65 at commit `f6b5df268f00bd15fe4016f7be67087e028040cc`. CI accepted the signing secrets, built the APK with the dedicated development key, verified the APK certificate, matched the expected SHA-256 fingerprint, and published the device-test artifact.
+
+A second independently produced stable-signed APK is required for the `adb install -r` compatibility test before this signing setup is considered complete.
+
 ## Why this exists
 
 Android only allows an in-place package update when the installed and incoming APKs are signed by the same certificate. GitHub-hosted runners otherwise create ephemeral debug keystores, which makes consecutive CI APKs incompatible with `adb install -r`.

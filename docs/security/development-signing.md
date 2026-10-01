@@ -14,9 +14,20 @@ This fingerprint is public metadata and is the value CI must match before publis
 
 ## CI validation status
 
-Stable-signed CI build 1 passed on workflow run #65 at commit `f6b5df268f00bd15fe4016f7be67087e028040cc`. CI accepted the signing secrets, built the APK with the dedicated development key, verified the APK certificate, matched the expected SHA-256 fingerprint, and published the device-test artifact.
+Two independent trusted push builds passed stable signing validation:
 
-A second independently produced stable-signed APK is required for the `adb install -r` compatibility test before this signing setup is considered complete.
+- workflow run #65 at commit `f6b5df268f00bd15fe4016f7be67087e028040cc`
+- workflow run #67 at commit `91d4d05af562f0aedd00dbef9e0ea88f2943abdf`
+
+Both runs accepted the signing secrets, rebuilt the ARM64 runtime, built the debug APK with the dedicated development key, verified the APK certificate, matched the expected SHA-256 fingerprint, and published the device-test artifact.
+
+The two extracted APKs are byte-for-byte identical with SHA-256:
+
+```text
+7cea6e1fb7c50513fae48e72e5f5e3dca5725647c038a1b4dbea744b931f5b22
+```
+
+The remaining acceptance test is a real Samsung `adb install -r` replacement from stable build 1 to stable build 2 while preserving AnvilDesk app data and the verified Ubuntu rootfs.
 
 ## Why this exists
 

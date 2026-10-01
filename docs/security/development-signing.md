@@ -2,6 +2,16 @@
 
 AnvilDesk uses a dedicated **development-only** Android signing certificate for CI device-test APKs. It must never be reused as a production/release key.
 
+## Established development certificate
+
+Public SHA-256 certificate fingerprint:
+
+```text
+67F139BCA36B618BD470D567ECE87C477C23788A7EDAC4D493DCBB9A3AB78065
+```
+
+This fingerprint is public metadata and is the value CI must match before publishing a device-upgrade APK.
+
 ## Why this exists
 
 Android only allows an in-place package update when the installed and incoming APKs are signed by the same certificate. GitHub-hosted runners otherwise create ephemeral debug keystores, which makes consecutive CI APKs incompatible with `adb install -r`.
@@ -55,7 +65,7 @@ keytool -list -v \
   | grep 'SHA256:'
 ```
 
-The SHA-256 certificate fingerprint is public metadata. Record it in project documentation after the key is established; never record the keystore password or private key.
+The SHA-256 certificate fingerprint is public metadata. Never record the keystore password or private key.
 
 ## Add repository secrets with GitHub CLI
 

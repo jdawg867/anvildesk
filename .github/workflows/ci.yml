@@ -49,8 +49,87 @@ jobs:
         with:
           gradle-version: "9.6.0"
 
-      - name: Unit tests and debug APK
-        run: gradle --no-daemon :core:runtime:testDebugUnitTest :app:assembleDebug
+      - name: Prepare stable development signing
+        id: dev_signing
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.ANVILDESK_DEV_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.ANVILDESK_DEV_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANVILDESK_DEV_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANVILDESK_DEV_KEY_PASSWORD }}
+          EXPECTED_CERT_SHA256: ${{ secrets.ANVILDESK_DEV_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${KEYSTORE_B64}" ]]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Stable development signing is not configured; no device-upgrade APK will be published."
+            exit 0
+          fi
+
+          : "${STORE_PASSWORD:?ANVILDESK_DEV_STORE_PASSWORD is required when ANVILDESK_DEV_KEYSTORE_B64 is set}"
+          : "${KEY_ALIAS:?ANVILDESK_DEV_KEY_ALIAS is required when ANVILDESK_DEV_KEYSTORE_B64 is set}"
+          : "${KEY_PASSWORD:?ANVILDESK_DEV_KEY_PASSWORD is required when ANVILDESK_DEV_KEYSTORE_B64 is set}"
+          : "${EXPECTED_CERT_SHA256:?ANVILDESK_DEV_CERT_SHA256 is required when ANVILDESK_DEV_KEYSTORE_B64 is set}"
+
+          keystore="$RUNNER_TEMP/anvildesk-development.jks"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$keystore"
+          chmod 600 "$keystore"
+
+          echo "available=true" >> "$GITHUB_OUTPUT"
+          echo "keystore_path=$keystore" >> "$GITHUB_OUTPUT"
+
+      - name: Unit tests
+        run: gradle --no-daemon :core:runtime:testDebugUnitTest
+
+      - name: Build stable development debug APK
+        if: github.event_name == 'push' && steps.dev_signing.outputs.available == 'true'
+        env:
+          ANVILDESK_DEV_KEYSTORE: ${{ steps.dev_signing.outputs.keystore_path }}
+          ANVILDESK_DEV_STORE_PASSWORD: ${{ secrets.ANVILDESK_DEV_STORE_PASSWORD }}
+          ANVILDESK_DEV_KEY_ALIAS: ${{ secrets.ANVILDESK_DEV_KEY_ALIAS }}
+          ANVILDESK_DEV_KEY_PASSWORD: ${{ secrets.ANVILDESK_DEV_KEY_PASSWORD }}
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Build non-publishable debug APK
+        if: github.event_name != 'push' || steps.dev_signing.outputs.available != 'true'
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Verify stable development APK certificate
+        if: github.event_name == 'push' && steps.dev_signing.outputs.available == 'true'
+        shell: bash
+        env:
+          EXPECTED_CERT_SHA256: ${{ secrets.ANVILDESK_DEV_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          apksigner="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+
+          "$apksigner" verify --verbose --print-certs "$apk"
+
+          actual="$($apksigner verify --print-certs "$apk" \
+            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
+            | tr '[:lower:]' '[:upper:]' \
+            | tr -d ':[:space:]')"
+          expected="$(printf '%s' "$EXPECTED_CERT_SHA256" \
+            | tr '[:lower:]' '[:upper:]' \
+            | tr -d ':[:space:]')"
+
+          [[ -n "$actual" ]] || { echo "Could not read APK certificate SHA-256 digest" >&2; exit 1; }
+          [[ "$actual" == "$expected" ]] || {
+            echo "Development signing certificate mismatch" >&2
+            echo "Expected: $expected" >&2
+            echo "Actual:   $actual" >&2
+            exit 1
+          }
+
+          echo "Verified development certificate SHA-256: $actual"
+
+      - name: Warn when device artifact signing is unavailable
+        if: github.event_name == 'push' && steps.dev_signing.outputs.available != 'true'
+        run: echo "::warning::Stable development signing secrets are not configured. The debug APK was tested but will not be published as a device-upgrade artifact."
 
       - name: Upload rootless runtime provenance
         uses: actions/upload-artifact@v4
@@ -63,7 +142,8 @@ jobs:
             build/rootless-runtime/provenance/SOURCE.txt
           if-no-files-found: error
 
-      - name: Upload debug APK
+      - name: Upload stable development debug APK
+        if: github.event_name == 'push' && steps.dev_signing.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: anvildesk-debug

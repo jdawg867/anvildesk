@@ -1,6 +1,7 @@
 package io.github.jdawg867.anvildesk
 
 import android.app.Activity
+import android.net.ConnectivityManager
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.Button
@@ -8,6 +9,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import io.github.jdawg867.anvildesk.runtime.DeviceInspector
+import io.github.jdawg867.anvildesk.runtime.MutableRuntimeRecord
+import io.github.jdawg867.anvildesk.runtime.MutableRuntimeStore
 import io.github.jdawg867.anvildesk.runtime.RootAccess
 import io.github.jdawg867.anvildesk.runtime.RootVerification
 import io.github.jdawg867.anvildesk.runtime.RootfsCatalog
@@ -100,6 +103,7 @@ class MainActivity : Activity() {
 
         val manifest = RootfsCatalog.Ubuntu24045Arm64
         val rootfsStore = RootfsInstallStore(filesDir)
+        val mutableRuntimeStore = MutableRuntimeStore(filesDir)
         val provisioner = RootfsProvisioner(rootfsStore)
         val initialState = try {
             provisioner.currentState(manifest)
@@ -107,6 +111,18 @@ class MainActivity : Activity() {
             RootfsProvisioningState.Failed(
                 "Installed rootfs state could not be read: ${error.message ?: error::class.java.simpleName}",
             )
+        }
+
+        var initialMutableError: String? = null
+        val initialMutableRecord = if (initialState is RootfsProvisioningState.Ready) {
+            try {
+                mutableRuntimeStore.currentRecord(manifest.id)
+            } catch (error: Throwable) {
+                initialMutableError = error.message ?: error::class.java.simpleName
+                null
+            }
+        } else {
+            null
         }
 
         content.addView(TextView(this).apply {
@@ -127,6 +143,7 @@ class MainActivity : Activity() {
 
         var smokeTestButton: Button? = null
         var managedSessionButton: Button? = null
+        var packageRuntimeButton: Button? = null
 
         val installRootfsButton = Button(this).apply {
             text = when {
@@ -153,6 +170,7 @@ class MainActivity : Activity() {
                                         isEnabled = false
                                         smokeTestButton?.isEnabled = snapshot.arm64Capable
                                         managedSessionButton?.isEnabled = snapshot.arm64Capable
+                                        packageRuntimeButton?.isEnabled = snapshot.arm64Capable
                                     }
                                     is RootfsProvisioningState.Failed -> {
                                         text = "Retry verified Ubuntu install"
@@ -178,6 +196,7 @@ class MainActivity : Activity() {
             nativeLibraryDirectory = File(applicationInfo.nativeLibraryDir),
             appCacheDirectory = cacheDir,
             sessionDataDirectory = File(filesDir, "linux-sessions/default"),
+            mutableRuntimeStore = mutableRuntimeStore,
         )
 
         content.addView(TextView(this).apply {
@@ -274,12 +293,95 @@ class MainActivity : Activity() {
         content.addView(managedSessionButton)
 
         content.addView(TextView(this).apply {
-            text = "Milestone 4 keeps command input fixed in code. The guest shell receives no user-supplied command text, /root and /tmp are mapped only to AnvilDesk app-private directories, stdout/stderr are bounded, and no external storage or network listener is exposed."
+            text = "Mutable Ubuntu package runtime"
+            textSize = 22f
+            setPadding(0, (32 * density).toInt(), 0, (8 * density).toInt())
+        })
+
+        val packageRuntimeStatus = TextView(this).apply {
+            text = when {
+                initialState !is RootfsProvisioningState.Ready ->
+                    "Install and verify Ubuntu rootfs before creating the mutable package runtime."
+                initialMutableError != null ->
+                    "Mutable runtime state needs attention: $initialMutableError"
+                initialMutableRecord != null -> mutableRuntimeReadyText(initialMutableRecord)
+                else ->
+                    "Mutable runtime not created. The verified Canonical rootfs remains unchanged."
+            }
+            textSize = 16f
+            setPadding(0, 0, 0, (12 * density).toInt())
+        }
+        content.addView(packageRuntimeStatus)
+
+        packageRuntimeButton = Button(this).apply {
+            text = if (initialMutableRecord != null) {
+                "Refresh Ubuntu package indexes"
+            } else {
+                "Create mutable runtime & refresh indexes"
+            }
+            isEnabled = snapshot.arm64Capable &&
+                initialState is RootfsProvisioningState.Ready &&
+                initialMutableError == null
+            setOnClickListener {
+                isEnabled = false
+                text = "Preparing mutable package runtime…"
+                packageRuntimeStatus.text =
+                    "Preparing app-private mutable Ubuntu runtime from the verified base…"
+
+                thread(name = "anvildesk-package-runtime") {
+                    try {
+                        val record = runtimeLauncher.ensureMutablePackageRuntime(manifest)
+                        runOnUiThread {
+                            packageRuntimeStatus.text =
+                                "${mutableRuntimeReadyText(record)}\nResolving Android active-network DNS and running fixed apt-get update…"
+                            text = "Refreshing Ubuntu package indexes…"
+                        }
+
+                        val dnsServers = activeDnsServers()
+                        val result = runtimeLauncher.runPackageIndexRefresh(
+                            manifest = manifest,
+                            dnsServers = dnsServers,
+                        )
+                        runOnUiThread {
+                            packageRuntimeStatus.text = packageRuntimeResultText(record, result)
+                            text = "Refresh Ubuntu package indexes again"
+                            isEnabled = true
+                        }
+                    } catch (error: Throwable) {
+                        runOnUiThread {
+                            packageRuntimeStatus.text =
+                                "Mutable package runtime failed: ${error.message ?: error::class.java.simpleName}"
+                            text = "Retry mutable runtime & package refresh"
+                            isEnabled = true
+                        }
+                    }
+                }
+            }
+        }
+        content.addView(packageRuntimeButton)
+
+        content.addView(TextView(this).apply {
+            text = "Milestone 5 keeps the verified Canonical rootfs as the provenance anchor and runs apt only in a separate app-private mutable copy. Package input is fixed to apt-get update, DNS comes from Android's active network through a generated app-private resolv.conf, and external storage/system/vendor trees are not exposed."
             textSize = 14f
             setPadding(0, (24 * density).toInt(), 0, 0)
         })
 
         setContentView(ScrollView(this).apply { addView(content) })
+    }
+
+    private fun activeDnsServers(): List<String> {
+        val connectivity = getSystemService(ConnectivityManager::class.java)
+        val network = connectivity.activeNetwork
+            ?: throw IllegalStateException("No active Android network is available")
+        val linkProperties = connectivity.getLinkProperties(network)
+            ?: throw IllegalStateException("Active Android network properties are unavailable")
+        val servers = linkProperties.dnsServers.mapNotNull { address ->
+            address.hostAddress?.takeIf { '%' !in it }
+        }.distinct()
+        if (servers.isEmpty()) {
+            throw IllegalStateException("Active Android network did not provide a usable DNS server")
+        }
+        return servers
     }
 
     private fun rootfsStatusText(state: RootfsProvisioningState): String = when (state) {
@@ -323,6 +425,40 @@ class MainActivity : Activity() {
 
         return buildString {
             appendLine("Managed session exit code: ${result.exitCode ?: "unknown"}")
+            appendLine("stdout:")
+            appendLine(result.stdout.trim().ifBlank { "<empty>" })
+            if (result.stdoutTruncated) appendLine("<stdout truncated at safety limit>")
+            val stderr = result.stderr.trim()
+            if (stderr.isNotEmpty()) {
+                appendLine("stderr:")
+                appendLine(stderr)
+            }
+            if (result.stderrTruncated) append("<stderr truncated at safety limit>")
+        }.trimEnd()
+    }
+
+    private fun mutableRuntimeReadyText(record: MutableRuntimeRecord): String = buildString {
+        appendLine("Mutable Ubuntu runtime ready.")
+        appendLine("Base manifest: ${record.baseManifestId}")
+        appendLine("Base SHA-256: ${record.baseSha256}")
+        appendLine("Cloned entries: ${record.clonedEntries}")
+        append("Verified Canonical rootfs remains separate and unchanged.")
+    }
+
+    private fun packageRuntimeResultText(
+        record: MutableRuntimeRecord,
+        result: RootlessRuntimeResult,
+    ): String {
+        if (result.timedOut) {
+            return buildString {
+                appendLine(mutableRuntimeReadyText(record))
+                append("apt-get update timed out and was terminated.")
+            }
+        }
+
+        return buildString {
+            appendLine(mutableRuntimeReadyText(record))
+            appendLine("apt-get update exit code: ${result.exitCode ?: "unknown"}")
             appendLine("stdout:")
             appendLine(result.stdout.trim().ifBlank { "<empty>" })
             if (result.stdoutTruncated) appendLine("<stdout truncated at safety limit>")

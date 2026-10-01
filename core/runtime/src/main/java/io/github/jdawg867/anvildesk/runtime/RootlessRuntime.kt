@@ -1,6 +1,8 @@
 package io.github.jdawg867.anvildesk.runtime
 
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
@@ -15,72 +17,225 @@ data class RootlessRuntimeResult(
     val stderr: String,
     val exitCode: Int?,
     val timedOut: Boolean,
+    val stdoutTruncated: Boolean = false,
+    val stderrTruncated: Boolean = false,
 )
+
+internal data class CapturedRootlessOutput(
+    val text: String,
+    val truncated: Boolean,
+)
+
+internal object RootlessOutputCapture {
+    const val DEFAULT_LIMIT_BYTES = 64 * 1024
+
+    fun read(
+        input: InputStream,
+        maxBytes: Int = DEFAULT_LIMIT_BYTES,
+    ): CapturedRootlessOutput {
+        require(maxBytes in 1..(1024 * 1024)) { "Rootless output limit must be between 1 byte and 1 MiB" }
+
+        val output = ByteArrayOutputStream(minOf(maxBytes, 8 * 1024))
+        val buffer = ByteArray(8 * 1024)
+        var kept = 0
+        var truncated = false
+
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+
+            val remaining = maxBytes - kept
+            val toKeep = minOf(count, remaining.coerceAtLeast(0))
+            if (toKeep > 0) {
+                output.write(buffer, 0, toKeep)
+                kept += toKeep
+            }
+            if (toKeep < count) {
+                truncated = true
+            }
+        }
+
+        return CapturedRootlessOutput(
+            text = output.toString(Charsets.UTF_8.name()),
+            truncated = truncated,
+        )
+    }
+}
 
 object RootlessRuntimePlanner {
     const val PROOT_LIBRARY = "libanvildesk-proot.so"
     const val LOADER_LIBRARY = "libanvildesk-proot-loader.so"
     const val GUEST_UNAME = "/usr/bin/uname"
+    const val GUEST_SHELL = "/bin/sh"
 
+    private const val GUEST_ID = "/usr/bin/id"
+    private const val GUEST_CAT = "/usr/bin/cat"
     private const val GUEST_PATH =
         "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+    private const val SESSION_DIAGNOSTIC_SCRIPT =
+        "set -eu\n" +
+            "printf 'ANVILDESK_SESSION=managed-v1\\n'\n" +
+            "printf 'PWD='; pwd\n" +
+            "printf 'HOME=%s\\n' \"\$HOME\"\n" +
+            "printf 'TMPDIR=%s\\n' \"\$TMPDIR\"\n" +
+            "printf 'USER=%s\\n' \"\$USER\"\n" +
+            "printf '%s\\n' '--- identity ---'\n" +
+            "$GUEST_ID\n" +
+            "printf '%s\\n' '--- kernel ---'\n" +
+            "$GUEST_UNAME -a\n" +
+            "printf '%s\\n' '--- os-release ---'\n" +
+            "$GUEST_CAT /etc/os-release\n"
 
     fun smokeTest(
         rootfs: File,
         nativeLibraryDirectory: File,
         hostTempDirectory: File,
     ): RootlessRuntimeInvocation {
-        require(rootfs.isDirectory) { "Verified rootfs directory is missing" }
-        require(nativeLibraryDirectory.isDirectory) { "Native library directory is missing" }
-        require(hostTempDirectory.isDirectory) { "Rootless runtime temp directory is missing" }
-
-        val proot = File(nativeLibraryDirectory, PROOT_LIBRARY)
-        val loader = File(nativeLibraryDirectory, LOADER_LIBRARY)
+        val runtime = requireRuntime(rootfs, nativeLibraryDirectory, hostTempDirectory)
         val guestUname = File(rootfs, GUEST_UNAME.removePrefix("/"))
-
-        require(proot.isFile) { "Packaged PRoot runtime is missing" }
-        require(loader.isFile) { "Packaged PRoot loader is missing" }
         require(guestUname.isFile) { "Ubuntu uname binary is missing" }
 
         return RootlessRuntimeInvocation(
-            command = listOf(
-                proot.absolutePath,
-                "-L",
-                "--kill-on-exit",
-                "--change-id=0:0",
-                "--rootfs=${rootfs.absolutePath}",
-                "--cwd=/",
-                GUEST_UNAME,
-                "-a",
-            ),
-            environment = linkedMapOf(
-                "PROOT_NO_SECCOMP" to "1",
-                "PROOT_TMP_DIR" to hostTempDirectory.absolutePath,
-                "PROOT_LOADER" to loader.absolutePath,
-                "PATH" to GUEST_PATH,
-                "HOME" to "/root",
-                "USER" to "root",
-                "LANG" to "C",
-                "LC_ALL" to "C",
-                "TMPDIR" to "/tmp",
-            ),
+            command = baseCommand(runtime, rootfs, "/") + listOf(GUEST_UNAME, "-a"),
+            environment = guestEnvironment(runtime.loader, hostTempDirectory),
         )
     }
+
+    fun managedSessionVerification(
+        rootfs: File,
+        nativeLibraryDirectory: File,
+        hostTempDirectory: File,
+        sessionHomeDirectory: File,
+        sessionTempDirectory: File,
+    ): RootlessRuntimeInvocation {
+        val runtime = requireRuntime(rootfs, nativeLibraryDirectory, hostTempDirectory)
+        requirePlainDirectory(sessionHomeDirectory, "Managed session home")
+        requirePlainDirectory(sessionTempDirectory, "Managed session temp")
+
+        listOf(GUEST_SHELL, GUEST_ID, GUEST_UNAME, GUEST_CAT).forEach { guestPath ->
+            require(File(rootfs, guestPath.removePrefix("/")).isFile) {
+                "Ubuntu guest binary is missing: $guestPath"
+            }
+        }
+        require(File(rootfs, "etc/os-release").isFile) { "Ubuntu os-release metadata is missing" }
+
+        val binds = listOf(
+            "--bind=${sessionHomeDirectory.absolutePath}:/root!",
+            "--bind=${sessionTempDirectory.absolutePath}:/tmp!",
+        )
+
+        return RootlessRuntimeInvocation(
+            command = baseCommand(runtime, rootfs, "/root") + binds + listOf(
+                GUEST_SHELL,
+                "-c",
+                SESSION_DIAGNOSTIC_SCRIPT,
+            ),
+            environment = guestEnvironment(runtime.loader, hostTempDirectory),
+        )
+    }
+
+    private data class RuntimeFiles(
+        val proot: File,
+        val loader: File,
+    )
+
+    private fun requireRuntime(
+        rootfs: File,
+        nativeLibraryDirectory: File,
+        hostTempDirectory: File,
+    ): RuntimeFiles {
+        requirePlainDirectory(rootfs, "Verified rootfs")
+        requirePlainDirectory(nativeLibraryDirectory, "Native library")
+        requirePlainDirectory(hostTempDirectory, "Rootless runtime temp")
+
+        val proot = File(nativeLibraryDirectory, PROOT_LIBRARY)
+        val loader = File(nativeLibraryDirectory, LOADER_LIBRARY)
+        require(proot.isFile) { "Packaged PRoot runtime is missing" }
+        require(loader.isFile) { "Packaged PRoot loader is missing" }
+        return RuntimeFiles(proot, loader)
+    }
+
+    private fun requirePlainDirectory(directory: File, label: String) {
+        require(directory.isDirectory) { "$label directory is missing" }
+        require(!java.nio.file.Files.isSymbolicLink(directory.toPath())) { "$label directory must not be a symlink" }
+    }
+
+    private fun baseCommand(
+        runtime: RuntimeFiles,
+        rootfs: File,
+        guestWorkingDirectory: String,
+    ): List<String> = listOf(
+        runtime.proot.absolutePath,
+        "-L",
+        "--kill-on-exit",
+        "--change-id=0:0",
+        "--rootfs=${rootfs.absolutePath}",
+        "--cwd=$guestWorkingDirectory",
+    )
+
+    private fun guestEnvironment(
+        loader: File,
+        hostTempDirectory: File,
+    ): Map<String, String> = linkedMapOf(
+        "PROOT_NO_SECCOMP" to "1",
+        "PROOT_TMP_DIR" to hostTempDirectory.absolutePath,
+        "PROOT_LOADER" to loader.absolutePath,
+        "PATH" to GUEST_PATH,
+        "HOME" to "/root",
+        "USER" to "root",
+        "LOGNAME" to "root",
+        "SHELL" to GUEST_SHELL,
+        "LANG" to "C",
+        "LC_ALL" to "C",
+        "TMPDIR" to "/tmp",
+    )
 }
 
 class RootlessRuntimeLauncher(
     private val store: RootfsInstallStore,
     private val nativeLibraryDirectory: File,
     private val appCacheDirectory: File,
+    private val sessionDataDirectory: File? = null,
 ) {
     fun runUbuntuSmokeTest(
         manifest: RootfsManifest,
         timeoutMillis: Long = 10_000L,
     ): RootlessRuntimeResult {
-        require(timeoutMillis in 1_000L..60_000L) {
-            "Rootless runtime timeout must be between 1 and 60 seconds"
-        }
+        validateTimeout(timeoutMillis)
+        val rootfs = verifiedRootfs(manifest)
+        val runtimeTemp = ensurePlainDirectory(File(appCacheDirectory, "rootless-runtime"))
+        val invocation = RootlessRuntimePlanner.smokeTest(
+            rootfs = rootfs,
+            nativeLibraryDirectory = nativeLibraryDirectory,
+            hostTempDirectory = runtimeTemp,
+        )
+        return execute(invocation, timeoutMillis)
+    }
 
+    fun runManagedSessionVerification(
+        manifest: RootfsManifest,
+        timeoutMillis: Long = 15_000L,
+    ): RootlessRuntimeResult {
+        validateTimeout(timeoutMillis)
+        val rootfs = verifiedRootfs(manifest)
+        val runtimeTemp = ensurePlainDirectory(File(appCacheDirectory, "rootless-runtime"))
+        val sessionRoot = sessionDataDirectory
+            ?: throw IllegalStateException("Managed session data directory is not configured")
+        val home = ensurePlainDirectory(File(sessionRoot, "home"))
+        val temp = ensurePlainDirectory(File(sessionRoot, "tmp"))
+
+        val invocation = RootlessRuntimePlanner.managedSessionVerification(
+            rootfs = rootfs,
+            nativeLibraryDirectory = nativeLibraryDirectory,
+            hostTempDirectory = runtimeTemp,
+            sessionHomeDirectory = home,
+            sessionTempDirectory = temp,
+        )
+        return execute(invocation, timeoutMillis)
+    }
+
+    private fun verifiedRootfs(manifest: RootfsManifest): File {
         val record = store.currentRecord(manifest.id)
             ?: throw IllegalStateException("Verified Ubuntu rootfs is not installed")
         require(record.sha256 == manifest.sha256) { "Installed rootfs digest does not match manifest" }
@@ -88,20 +243,31 @@ class RootlessRuntimeLauncher(
         require(record.architecture == manifest.architecture) {
             "Installed rootfs architecture does not match manifest"
         }
+        return store.installedRoot(manifest.id)
+    }
 
-        val runtimeTemp = File(appCacheDirectory, "rootless-runtime")
-        if (runtimeTemp.exists()) {
-            require(runtimeTemp.isDirectory) { "Rootless runtime temp path is not a directory" }
+    private fun ensurePlainDirectory(directory: File): File {
+        if (directory.exists()) {
+            require(directory.isDirectory) { "Managed runtime path is not a directory: ${directory.absolutePath}" }
+            require(!java.nio.file.Files.isSymbolicLink(directory.toPath())) {
+                "Managed runtime directory must not be a symlink: ${directory.absolutePath}"
+            }
         } else {
-            require(runtimeTemp.mkdirs()) { "Could not create rootless runtime temp directory" }
+            require(directory.mkdirs()) { "Could not create managed runtime directory: ${directory.absolutePath}" }
         }
+        return directory
+    }
 
-        val invocation = RootlessRuntimePlanner.smokeTest(
-            rootfs = store.installedRoot(manifest.id),
-            nativeLibraryDirectory = nativeLibraryDirectory,
-            hostTempDirectory = runtimeTemp,
-        )
+    private fun validateTimeout(timeoutMillis: Long) {
+        require(timeoutMillis in 1_000L..60_000L) {
+            "Rootless runtime timeout must be between 1 and 60 seconds"
+        }
+    }
 
+    private fun execute(
+        invocation: RootlessRuntimeInvocation,
+        timeoutMillis: Long,
+    ): RootlessRuntimeResult {
         val processBuilder = ProcessBuilder(invocation.command)
         processBuilder.environment().apply {
             clear()
@@ -110,11 +276,11 @@ class RootlessRuntimeLauncher(
 
         val process = processBuilder.start()
         val readers = Executors.newFixedThreadPool(2)
-        val stdoutFuture = readers.submit<String> {
-            process.inputStream.bufferedReader().use { it.readText() }
+        val stdoutFuture = readers.submit<CapturedRootlessOutput> {
+            process.inputStream.use { RootlessOutputCapture.read(it) }
         }
-        val stderrFuture = readers.submit<String> {
-            process.errorStream.bufferedReader().use { it.readText() }
+        val stderrFuture = readers.submit<CapturedRootlessOutput> {
+            process.errorStream.use { RootlessOutputCapture.read(it) }
         }
 
         var timedOut = false
@@ -134,10 +300,12 @@ class RootlessRuntimeLauncher(
             val stdout = readCompletedOutput(stdoutFuture, "stdout")
             val stderr = readCompletedOutput(stderrFuture, "stderr")
             return RootlessRuntimeResult(
-                stdout = stdout,
-                stderr = stderr,
+                stdout = stdout.text,
+                stderr = stderr.text,
                 exitCode = exitCode,
                 timedOut = timedOut,
+                stdoutTruncated = stdout.truncated,
+                stderrTruncated = stderr.truncated,
             )
         } finally {
             if (process.isAlive) {
@@ -148,12 +316,12 @@ class RootlessRuntimeLauncher(
     }
 
     private fun readCompletedOutput(
-        future: java.util.concurrent.Future<String>,
+        future: java.util.concurrent.Future<CapturedRootlessOutput>,
         streamName: String,
-    ): String = try {
+    ): CapturedRootlessOutput = try {
         future.get(2L, TimeUnit.SECONDS)
     } catch (error: TimeoutException) {
         future.cancel(true)
-        "<$streamName capture timed out>"
+        CapturedRootlessOutput("<$streamName capture timed out>", truncated = true)
     }
 }

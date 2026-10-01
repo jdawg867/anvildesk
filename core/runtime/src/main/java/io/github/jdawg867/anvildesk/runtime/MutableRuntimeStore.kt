@@ -198,10 +198,12 @@ class MutableRuntimeStore(
         Files.walkFileTree(sourceRoot, object : SimpleFileVisitor<Path>() {
             override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
                 val relative = sourceRoot.relativize(dir)
-                if (relative.nameCount > 0 && relative.getName(0).toString() == ".anvildesk") {
+                if (relative.toString().isEmpty()) {
+                    return FileVisitResult.CONTINUE
+                }
+                if (relative.getName(0).toString() == ".anvildesk") {
                     return FileVisitResult.SKIP_SUBTREE
                 }
-                if (relative.nameCount == 0) return FileVisitResult.CONTINUE
 
                 val destination = destinationRoot.resolve(relative)
                 Files.copy(
@@ -216,7 +218,7 @@ class MutableRuntimeStore(
 
             override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
                 val relative = sourceRoot.relativize(file)
-                if (relative.nameCount > 0 && relative.getName(0).toString() == ".anvildesk") {
+                if (relative.getName(0).toString() == ".anvildesk") {
                     return FileVisitResult.CONTINUE
                 }
 

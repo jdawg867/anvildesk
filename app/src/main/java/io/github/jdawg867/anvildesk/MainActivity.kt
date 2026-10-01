@@ -14,6 +14,9 @@ import io.github.jdawg867.anvildesk.runtime.RootfsCatalog
 import io.github.jdawg867.anvildesk.runtime.RootfsInstallStore
 import io.github.jdawg867.anvildesk.runtime.RootfsProvisioner
 import io.github.jdawg867.anvildesk.runtime.RootfsProvisioningState
+import io.github.jdawg867.anvildesk.runtime.RootlessRuntimeLauncher
+import io.github.jdawg867.anvildesk.runtime.RootlessRuntimeResult
+import java.io.File
 import java.util.Locale
 import kotlin.concurrent.thread
 
@@ -96,7 +99,8 @@ class MainActivity : Activity() {
         })
 
         val manifest = RootfsCatalog.Ubuntu24045Arm64
-        val provisioner = RootfsProvisioner(RootfsInstallStore(filesDir))
+        val rootfsStore = RootfsInstallStore(filesDir)
+        val provisioner = RootfsProvisioner(rootfsStore)
         val initialState = try {
             provisioner.currentState(manifest)
         } catch (error: Throwable) {
@@ -121,6 +125,8 @@ class MainActivity : Activity() {
         }
         content.addView(rootfsStatus)
 
+        var smokeTestButton: Button? = null
+
         val installRootfsButton = Button(this).apply {
             text = when {
                 !snapshot.arm64Capable -> "ARM64 rootfs unavailable"
@@ -144,6 +150,7 @@ class MainActivity : Activity() {
                                     is RootfsProvisioningState.Ready -> {
                                         text = "Ubuntu rootfs ready"
                                         isEnabled = false
+                                        smokeTestButton?.isEnabled = snapshot.arm64Capable
                                     }
                                     is RootfsProvisioningState.Failed -> {
                                         text = "Retry verified Ubuntu install"
@@ -165,7 +172,59 @@ class MainActivity : Activity() {
         content.addView(installRootfsButton)
 
         content.addView(TextView(this).apply {
-            text = "Milestone 2 only downloads, verifies, and installs the rootfs into app-private storage. It does not execute Linux, expose a shell, or request root."
+            text = "Linux userspace smoke test"
+            textSize = 22f
+            setPadding(0, (32 * density).toInt(), 0, (8 * density).toInt())
+        })
+
+        val runtimeStatus = TextView(this).apply {
+            text = if (initialState is RootfsProvisioningState.Ready) {
+                "Ready to execute fixed Ubuntu command: /usr/bin/uname -a"
+            } else {
+                "Install and verify Ubuntu rootfs before running the smoke test."
+            }
+            textSize = 16f
+            setPadding(0, 0, 0, (12 * density).toInt())
+        }
+        content.addView(runtimeStatus)
+
+        val runtimeLauncher = RootlessRuntimeLauncher(
+            store = rootfsStore,
+            nativeLibraryDirectory = File(applicationInfo.nativeLibraryDir),
+            appCacheDirectory = cacheDir,
+        )
+
+        smokeTestButton = Button(this).apply {
+            text = "Run Linux smoke test"
+            isEnabled = snapshot.arm64Capable && initialState is RootfsProvisioningState.Ready
+            setOnClickListener {
+                isEnabled = false
+                text = "Running Linux smoke test…"
+                runtimeStatus.text = "Running /usr/bin/uname -a inside verified Ubuntu rootfs…"
+
+                thread(name = "anvildesk-rootless-smoke") {
+                    try {
+                        val result = runtimeLauncher.runUbuntuSmokeTest(manifest)
+                        runOnUiThread {
+                            runtimeStatus.text = rootlessResultText(result)
+                            text = "Run Linux smoke test again"
+                            isEnabled = true
+                        }
+                    } catch (error: Throwable) {
+                        runOnUiThread {
+                            runtimeStatus.text =
+                                "Linux smoke test failed: ${error.message ?: error::class.java.simpleName}"
+                            text = "Retry Linux smoke test"
+                            isEnabled = true
+                        }
+                    }
+                }
+            }
+        }
+        content.addView(smokeTestButton)
+
+        content.addView(TextView(this).apply {
+            text = "Milestone 3 executes only the fixed /usr/bin/uname -a smoke test through a source-built, APK-packaged rootless runtime. It does not expose an arbitrary shell, open a network listener, or request root."
             textSize = 14f
             setPadding(0, (24 * density).toInt(), 0, 0)
         })
@@ -185,6 +244,24 @@ class MainActivity : Activity() {
         is RootfsProvisioningState.Ready ->
             "Verified Ubuntu rootfs ready (${state.record.entriesExtracted} archive entries)."
         is RootfsProvisioningState.Failed -> "Rootfs install failed: ${state.message}"
+    }
+
+    private fun rootlessResultText(result: RootlessRuntimeResult): String {
+        if (result.timedOut) {
+            return "Linux smoke test timed out and was terminated."
+        }
+
+        return buildString {
+            appendLine("Command: /usr/bin/uname -a")
+            appendLine("Exit code: ${result.exitCode ?: "unknown"}")
+            appendLine("stdout:")
+            appendLine(result.stdout.trim().ifBlank { "<empty>" })
+            val stderr = result.stderr.trim()
+            if (stderr.isNotEmpty()) {
+                appendLine("stderr:")
+                append(stderr)
+            }
+        }.trimEnd()
     }
 
     private fun formatBytes(bytes: Long): String = when {

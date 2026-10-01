@@ -126,6 +126,7 @@ class MainActivity : Activity() {
         content.addView(rootfsStatus)
 
         var smokeTestButton: Button? = null
+        var managedSessionButton: Button? = null
 
         val installRootfsButton = Button(this).apply {
             text = when {
@@ -151,6 +152,7 @@ class MainActivity : Activity() {
                                         text = "Ubuntu rootfs ready"
                                         isEnabled = false
                                         smokeTestButton?.isEnabled = snapshot.arm64Capable
+                                        managedSessionButton?.isEnabled = snapshot.arm64Capable
                                     }
                                     is RootfsProvisioningState.Failed -> {
                                         text = "Retry verified Ubuntu install"
@@ -171,6 +173,13 @@ class MainActivity : Activity() {
         }
         content.addView(installRootfsButton)
 
+        val runtimeLauncher = RootlessRuntimeLauncher(
+            store = rootfsStore,
+            nativeLibraryDirectory = File(applicationInfo.nativeLibraryDir),
+            appCacheDirectory = cacheDir,
+            sessionDataDirectory = File(filesDir, "linux-sessions/default"),
+        )
+
         content.addView(TextView(this).apply {
             text = "Linux userspace smoke test"
             textSize = 22f
@@ -187,12 +196,6 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, (12 * density).toInt())
         }
         content.addView(runtimeStatus)
-
-        val runtimeLauncher = RootlessRuntimeLauncher(
-            store = rootfsStore,
-            nativeLibraryDirectory = File(applicationInfo.nativeLibraryDir),
-            appCacheDirectory = cacheDir,
-        )
 
         smokeTestButton = Button(this).apply {
             text = "Run Linux smoke test"
@@ -224,7 +227,54 @@ class MainActivity : Activity() {
         content.addView(smokeTestButton)
 
         content.addView(TextView(this).apply {
-            text = "Milestone 3 executes only the fixed /usr/bin/uname -a smoke test through a source-built, APK-packaged rootless runtime. It does not expose an arbitrary shell, open a network listener, or request root."
+            text = "Managed Ubuntu session"
+            textSize = 22f
+            setPadding(0, (32 * density).toInt(), 0, (8 * density).toInt())
+        })
+
+        val managedSessionStatus = TextView(this).apply {
+            text = if (initialState is RootfsProvisioningState.Ready) {
+                "Ready to verify a fixed managed Ubuntu shell session with app-private /root and /tmp."
+            } else {
+                "Install and verify Ubuntu rootfs before starting a managed session."
+            }
+            textSize = 16f
+            setPadding(0, 0, 0, (12 * density).toInt())
+        }
+        content.addView(managedSessionStatus)
+
+        managedSessionButton = Button(this).apply {
+            text = "Verify managed Ubuntu session"
+            isEnabled = snapshot.arm64Capable && initialState is RootfsProvisioningState.Ready
+            setOnClickListener {
+                isEnabled = false
+                text = "Verifying managed session…"
+                managedSessionStatus.text =
+                    "Starting fixed /bin/sh diagnostic inside verified Ubuntu rootfs…"
+
+                thread(name = "anvildesk-managed-session") {
+                    try {
+                        val result = runtimeLauncher.runManagedSessionVerification(manifest)
+                        runOnUiThread {
+                            managedSessionStatus.text = managedSessionResultText(result)
+                            text = "Verify managed Ubuntu session again"
+                            isEnabled = true
+                        }
+                    } catch (error: Throwable) {
+                        runOnUiThread {
+                            managedSessionStatus.text =
+                                "Managed Ubuntu session failed: ${error.message ?: error::class.java.simpleName}"
+                            text = "Retry managed Ubuntu session"
+                            isEnabled = true
+                        }
+                    }
+                }
+            }
+        }
+        content.addView(managedSessionButton)
+
+        content.addView(TextView(this).apply {
+            text = "Milestone 4 keeps command input fixed in code. The guest shell receives no user-supplied command text, /root and /tmp are mapped only to AnvilDesk app-private directories, stdout/stderr are bounded, and no external storage or network listener is exposed."
             textSize = 14f
             setPadding(0, (24 * density).toInt(), 0, 0)
         })
@@ -256,11 +306,32 @@ class MainActivity : Activity() {
             appendLine("Exit code: ${result.exitCode ?: "unknown"}")
             appendLine("stdout:")
             appendLine(result.stdout.trim().ifBlank { "<empty>" })
+            if (result.stdoutTruncated) appendLine("<stdout truncated at safety limit>")
             val stderr = result.stderr.trim()
             if (stderr.isNotEmpty()) {
                 appendLine("stderr:")
-                append(stderr)
+                appendLine(stderr)
             }
+            if (result.stderrTruncated) append("<stderr truncated at safety limit>")
+        }.trimEnd()
+    }
+
+    private fun managedSessionResultText(result: RootlessRuntimeResult): String {
+        if (result.timedOut) {
+            return "Managed Ubuntu session timed out and was terminated."
+        }
+
+        return buildString {
+            appendLine("Managed session exit code: ${result.exitCode ?: "unknown"}")
+            appendLine("stdout:")
+            appendLine(result.stdout.trim().ifBlank { "<empty>" })
+            if (result.stdoutTruncated) appendLine("<stdout truncated at safety limit>")
+            val stderr = result.stderr.trim()
+            if (stderr.isNotEmpty()) {
+                appendLine("stderr:")
+                appendLine(stderr)
+            }
+            if (result.stderrTruncated) append("<stderr truncated at safety limit>")
         }.trimEnd()
     }
 

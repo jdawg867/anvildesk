@@ -66,13 +66,13 @@ internal fun addX11BootstrapSection(
         setOnClickListener {
             isEnabled = false
             text = "Refreshing package indexes…"
-            status.text = "Refreshing Ubuntu package metadata through the existing managed Android-DNS path…"
+            status.text = "Refreshing Ubuntu package metadata through the managed Android-DNS path…"
 
             thread(name = "anvildesk-x11-bootstrap") {
                 var stage = "apt-get update"
                 try {
                     val dnsServers = activeDnsServers(activity)
-                    val refresh = runtimeLauncher.runPackageIndexRefresh(
+                    val refresh = x11Launcher.refreshIndexes(
                         manifest = manifest,
                         dnsServers = dnsServers,
                     )

@@ -31,6 +31,34 @@ object X11BootstrapPackageSet {
 object X11BootstrapPlanner {
     const val GUEST_DPKG_QUERY = "/usr/bin/dpkg-query"
 
+    fun refreshIndexes(
+        mutableRootfs: File,
+        nativeLibraryDirectory: File,
+        hostTempDirectory: File,
+        sessionHomeDirectory: File,
+        sessionTempDirectory: File,
+        managedResolvConf: File,
+    ): RootlessRuntimeInvocation {
+        val runtime = requireRuntime(mutableRootfs, nativeLibraryDirectory, hostTempDirectory)
+        requirePackageInputs(mutableRootfs, sessionHomeDirectory, sessionTempDirectory, managedResolvConf)
+
+        return RootlessRuntimeInvocation(
+            command = baseCommand(runtime, mutableRootfs) + networkBinds(
+                sessionHomeDirectory,
+                sessionTempDirectory,
+                managedResolvConf,
+            ) + listOf(
+                RootlessRuntimePlanner.GUEST_APT_GET,
+                "-o",
+                "Acquire::Retries=2",
+                "-o",
+                "APT::Color=0",
+                "update",
+            ),
+            environment = packageEnvironment(runtime.loader, hostTempDirectory),
+        )
+    }
+
     fun install(
         mutableRootfs: File,
         nativeLibraryDirectory: File,
@@ -40,12 +68,7 @@ object X11BootstrapPlanner {
         managedResolvConf: File,
     ): RootlessRuntimeInvocation {
         val runtime = requireRuntime(mutableRootfs, nativeLibraryDirectory, hostTempDirectory)
-        requirePlainDirectory(sessionHomeDirectory, "Managed session home")
-        requirePlainDirectory(sessionTempDirectory, "Managed session temp")
-        requirePlainFile(managedResolvConf, "Managed resolv.conf")
-        require(File(mutableRootfs, RootlessRuntimePlanner.GUEST_APT_GET.removePrefix("/")).isFile) {
-            "Ubuntu apt-get binary is missing from mutable runtime"
-        }
+        requirePackageInputs(mutableRootfs, sessionHomeDirectory, sessionTempDirectory, managedResolvConf)
 
         return RootlessRuntimeInvocation(
             command = baseCommand(runtime, mutableRootfs) + networkBinds(
@@ -115,6 +138,20 @@ object X11BootstrapPlanner {
         return RuntimeFiles(proot, loader)
     }
 
+    private fun requirePackageInputs(
+        mutableRootfs: File,
+        sessionHomeDirectory: File,
+        sessionTempDirectory: File,
+        managedResolvConf: File,
+    ) {
+        requirePlainDirectory(sessionHomeDirectory, "Managed session home")
+        requirePlainDirectory(sessionTempDirectory, "Managed session temp")
+        requirePlainFile(managedResolvConf, "Managed resolv.conf")
+        require(File(mutableRootfs, RootlessRuntimePlanner.GUEST_APT_GET.removePrefix("/")).isFile) {
+            "Ubuntu apt-get binary is missing from mutable runtime"
+        }
+    }
+
     private fun requirePlainDirectory(directory: File, label: String) {
         require(directory.isDirectory) { "$label directory is missing" }
         require(!Files.isSymbolicLink(directory.toPath())) { "$label directory must not be a symlink" }
@@ -175,28 +212,38 @@ class X11BootstrapLauncher(
     private val appCacheDirectory: File,
     private val sessionDataDirectory: File,
 ) {
+    fun refreshIndexes(
+        manifest: RootfsManifest,
+        dnsServers: List<String>,
+        timeoutMillis: Long = 180_000L,
+    ): RootlessRuntimeResult {
+        validatePackageTimeout(timeoutMillis)
+        val context = packageContext(manifest, dnsServers)
+        val invocation = X11BootstrapPlanner.refreshIndexes(
+            mutableRootfs = context.mutableRoot,
+            nativeLibraryDirectory = nativeLibraryDirectory,
+            hostTempDirectory = context.runtimeTemp,
+            sessionHomeDirectory = context.home,
+            sessionTempDirectory = context.temp,
+            managedResolvConf = context.resolvConf,
+        )
+        return execute(invocation, timeoutMillis)
+    }
+
     fun install(
         manifest: RootfsManifest,
         dnsServers: List<String>,
         timeoutMillis: Long = 300_000L,
     ): RootlessRuntimeResult {
         validatePackageTimeout(timeoutMillis)
-        val mutableRoot = mutableRootfs(manifest)
-        preparePackageBindTargets(mutableRoot)
-
-        val runtimeTemp = ensurePlainDirectory(File(appCacheDirectory, "rootless-runtime"))
-        val home = ensurePlainDirectory(File(sessionDataDirectory, "home"))
-        val temp = ensurePlainDirectory(File(sessionDataDirectory, "tmp"))
-        val network = ensurePlainDirectory(File(sessionDataDirectory, "network"))
-        val resolvConf = ManagedGuestDns.write(File(network, "resolv.conf"), dnsServers)
-
+        val context = packageContext(manifest, dnsServers)
         val invocation = X11BootstrapPlanner.install(
-            mutableRootfs = mutableRoot,
+            mutableRootfs = context.mutableRoot,
             nativeLibraryDirectory = nativeLibraryDirectory,
-            hostTempDirectory = runtimeTemp,
-            sessionHomeDirectory = home,
-            sessionTempDirectory = temp,
-            managedResolvConf = resolvConf,
+            hostTempDirectory = context.runtimeTemp,
+            sessionHomeDirectory = context.home,
+            sessionTempDirectory = context.temp,
+            managedResolvConf = context.resolvConf,
         )
         return execute(invocation, timeoutMillis)
     }
@@ -236,6 +283,25 @@ class X11BootstrapLauncher(
         return X11BootstrapPackageSet.REQUIRED_GUEST_BINARIES.all { guestPath ->
             File(root, guestPath.removePrefix("/")).isFile
         }
+    }
+
+    private data class PackageContext(
+        val mutableRoot: File,
+        val runtimeTemp: File,
+        val home: File,
+        val temp: File,
+        val resolvConf: File,
+    )
+
+    private fun packageContext(manifest: RootfsManifest, dnsServers: List<String>): PackageContext {
+        val mutableRoot = mutableRootfs(manifest)
+        preparePackageBindTargets(mutableRoot)
+        val runtimeTemp = ensurePlainDirectory(File(appCacheDirectory, "rootless-runtime"))
+        val home = ensurePlainDirectory(File(sessionDataDirectory, "home"))
+        val temp = ensurePlainDirectory(File(sessionDataDirectory, "tmp"))
+        val network = ensurePlainDirectory(File(sessionDataDirectory, "network"))
+        val resolvConf = ManagedGuestDns.write(File(network, "resolv.conf"), dnsServers)
+        return PackageContext(mutableRoot, runtimeTemp, home, temp, resolvConf)
     }
 
     private fun mutableRootfs(manifest: RootfsManifest): File {

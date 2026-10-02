@@ -55,7 +55,7 @@ object X11BootstrapPlanner {
                 "APT::Color=0",
                 "update",
             ),
-            environment = packageEnvironment(runtime.loader, hostTempDirectory),
+            environment = packageEnvironment(runtime.loader, hostTempDirectory, mutableRootfs),
         )
     }
 
@@ -87,7 +87,7 @@ object X11BootstrapPlanner {
                 "--no-install-recommends",
                 "install",
             ) + X11BootstrapPackageSet.PACKAGES,
-            environment = packageEnvironment(runtime.loader, hostTempDirectory),
+            environment = packageEnvironment(runtime.loader, hostTempDirectory, mutableRootfs),
         )
     }
 
@@ -114,7 +114,7 @@ object X11BootstrapPlanner {
                 "--show",
                 "--showformat=$format",
             ) + X11BootstrapPackageSet.PACKAGES,
-            environment = guestEnvironment(runtime.loader, hostTempDirectory),
+            environment = guestEnvironment(runtime.loader, hostTempDirectory, mutableRootfs),
         )
     }
 
@@ -129,6 +129,7 @@ object X11BootstrapPlanner {
         hostTempDirectory: File,
     ): RuntimeFiles {
         requirePlainDirectory(rootfs, "Mutable runtime rootfs")
+        requirePlainDirectory(File(rootfs, ".l2s"), "PRoot link2symlink state")
         requirePlainDirectory(nativeLibraryDirectory, "Native library")
         requirePlainDirectory(hostTempDirectory, "Rootless runtime temp")
         val proot = File(nativeLibraryDirectory, RootlessRuntimePlanner.PROOT_LIBRARY)
@@ -178,15 +179,21 @@ object X11BootstrapPlanner {
     private fun baseCommand(runtime: RuntimeFiles, rootfs: File): List<String> = listOf(
         runtime.proot.absolutePath,
         "-L",
+        "--link2symlink",
         "--kill-on-exit",
         "--change-id=0:0",
         "--rootfs=${rootfs.absolutePath}",
         "--cwd=/root",
     )
 
-    private fun guestEnvironment(loader: File, hostTempDirectory: File): Map<String, String> = linkedMapOf(
+    private fun guestEnvironment(
+        loader: File,
+        hostTempDirectory: File,
+        mutableRootfs: File,
+    ): Map<String, String> = linkedMapOf(
         "PROOT_NO_SECCOMP" to "1",
         "PROOT_TMP_DIR" to hostTempDirectory.absolutePath,
+        "PROOT_L2S_DIR" to File(mutableRootfs, ".l2s").absolutePath,
         "PROOT_LOADER" to loader.absolutePath,
         "PATH" to "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "HOME" to "/root",
@@ -198,8 +205,12 @@ object X11BootstrapPlanner {
         "TMPDIR" to "/tmp",
     )
 
-    private fun packageEnvironment(loader: File, hostTempDirectory: File): Map<String, String> =
-        LinkedHashMap(guestEnvironment(loader, hostTempDirectory)).apply {
+    private fun packageEnvironment(
+        loader: File,
+        hostTempDirectory: File,
+        mutableRootfs: File,
+    ): Map<String, String> =
+        LinkedHashMap(guestEnvironment(loader, hostTempDirectory, mutableRootfs)).apply {
             put("DEBIAN_FRONTEND", "noninteractive")
             put("APT_LISTCHANGES_FRONTEND", "none")
         }
@@ -308,7 +319,9 @@ class X11BootstrapLauncher(
         val verified = verifiedRootfs(manifest)
         val record = mutableRuntimeStore.ensureFromVerified(manifest, verified)
         requireMutableRecordMatchesManifest(record, manifest)
-        return mutableRuntimeStore.runtimeRoot(manifest.id)
+        val root = mutableRuntimeStore.runtimeRoot(manifest.id)
+        ensurePlainDirectory(File(root, ".l2s"))
+        return root
     }
 
     private fun verifiedRootfs(manifest: RootfsManifest): File {

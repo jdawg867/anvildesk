@@ -1,8 +1,11 @@
 package io.github.jdawg867.anvildesk.runtime
 
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption
+import java.util.concurrent.CancellationException
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
@@ -340,7 +343,10 @@ class X11BootstrapLauncher(
             )
         } finally {
             if (process.isAlive) process.destroyForcibly()
-            readers.shutdownNow()
+            readers.shutdown()
+            if (!readers.awaitTermination(250L, TimeUnit.MILLISECONDS)) {
+                readers.shutdownNow()
+            }
         }
     }
 
@@ -348,9 +354,21 @@ class X11BootstrapLauncher(
         future: java.util.concurrent.Future<CapturedRootlessOutput>,
         streamName: String,
     ): CapturedRootlessOutput = try {
-        future.get(2L, TimeUnit.SECONDS)
+        future.get(5L, TimeUnit.SECONDS)
     } catch (error: TimeoutException) {
         future.cancel(true)
-        CapturedRootlessOutput("<$streamName capture timed out>", truncated = true)
+        CapturedRootlessOutput("<$streamName capture timed out after guest process exit>", truncated = true)
+    } catch (_: CancellationException) {
+        CapturedRootlessOutput("<$streamName capture cancelled after guest process exit>", truncated = true)
+    } catch (error: ExecutionException) {
+        val cause = error.cause
+        if (cause is IOException) {
+            CapturedRootlessOutput(
+                "<$streamName pipe closed after guest process exit: ${cause::class.java.simpleName}>",
+                truncated = true,
+            )
+        } else {
+            throw (cause ?: error)
+        }
     }
 }

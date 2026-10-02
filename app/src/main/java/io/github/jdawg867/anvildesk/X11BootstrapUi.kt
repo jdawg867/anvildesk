@@ -69,13 +69,14 @@ internal fun addX11BootstrapSection(
             status.text = "Refreshing Ubuntu package metadata through the existing managed Android-DNS path…"
 
             thread(name = "anvildesk-x11-bootstrap") {
+                var stage = "apt-get update"
                 try {
                     val dnsServers = activeDnsServers(activity)
                     val refresh = runtimeLauncher.runPackageIndexRefresh(
                         manifest = manifest,
                         dnsServers = dnsServers,
                     )
-                    requireSuccess("apt-get update", refresh)
+                    requireSuccess(stage, refresh)
 
                     activity.runOnUiThread {
                         text = "Installing fixed X11 package set…"
@@ -86,19 +87,21 @@ internal fun addX11BootstrapSection(
                         }
                     }
 
+                    stage = "apt-get install"
                     val install = x11Launcher.install(
                         manifest = manifest,
                         dnsServers = dnsServers,
                     )
-                    requireSuccess("apt-get install", install)
+                    requireSuccess(stage, install)
 
                     activity.runOnUiThread {
                         text = "Verifying X11 package set…"
                         status.text = "Install exited 0. Verifying exact package state and required guest binaries…"
                     }
 
+                    stage = "dpkg-query verification"
                     val verification = x11Launcher.verify(manifest)
-                    requireSuccess("dpkg-query verification", verification)
+                    requireSuccess(stage, verification)
 
                     activity.runOnUiThread {
                         status.text = successText(refresh, install, verification)
@@ -107,7 +110,8 @@ internal fun addX11BootstrapSection(
                     }
                 } catch (error: Throwable) {
                     activity.runOnUiThread {
-                        status.text = "X11 bootstrap package flow failed: ${error.message ?: error::class.java.simpleName}"
+                        status.text =
+                            "X11 bootstrap package flow failed during $stage: ${error.message ?: error::class.java.simpleName}"
                         text = "Retry X11 bootstrap packages"
                         isEnabled = true
                     }

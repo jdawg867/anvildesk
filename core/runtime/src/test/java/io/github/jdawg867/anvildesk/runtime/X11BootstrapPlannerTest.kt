@@ -26,6 +26,7 @@ class X11BootstrapPlannerTest {
         val workspace = Files.createTempDirectory("anvildesk-x11-bootstrap-refresh").toFile()
         try {
             val rootfs = File(workspace, "mutable-rootfs").apply { mkdirs() }
+            val l2s = File(rootfs, ".l2s").apply { mkdirs() }
             File(rootfs, "usr/bin/apt-get").apply {
                 parentFile.mkdirs()
                 writeText("apt")
@@ -51,6 +52,8 @@ class X11BootstrapPlannerTest {
             )
 
             assertEquals(proot.absolutePath, invocation.command.first())
+            assertTrue(invocation.command.contains("-L"))
+            assertTrue(invocation.command.contains("--link2symlink"))
             assertTrue(invocation.command.contains("--rootfs=${rootfs.absolutePath}"))
             assertTrue(invocation.command.contains("--bind=${sessionHome.absolutePath}:/root!"))
             assertTrue(invocation.command.contains("--bind=${sessionTemp.absolutePath}:/tmp!"))
@@ -80,6 +83,7 @@ class X11BootstrapPlannerTest {
             }
             assertEquals("noninteractive", invocation.environment["DEBIAN_FRONTEND"])
             assertEquals("none", invocation.environment["APT_LISTCHANGES_FRONTEND"])
+            assertEquals(l2s.absolutePath, invocation.environment["PROOT_L2S_DIR"])
             assertEquals(loader.absolutePath, invocation.environment["PROOT_LOADER"])
         } finally {
             workspace.deleteRecursively()
@@ -91,6 +95,7 @@ class X11BootstrapPlannerTest {
         val workspace = Files.createTempDirectory("anvildesk-x11-bootstrap-install").toFile()
         try {
             val rootfs = File(workspace, "mutable-rootfs").apply { mkdirs() }
+            val l2s = File(rootfs, ".l2s").apply { mkdirs() }
             File(rootfs, "usr/bin/apt-get").apply {
                 parentFile.mkdirs()
                 writeText("apt")
@@ -116,6 +121,8 @@ class X11BootstrapPlannerTest {
             )
 
             assertEquals(proot.absolutePath, invocation.command.first())
+            assertTrue(invocation.command.contains("-L"))
+            assertTrue(invocation.command.contains("--link2symlink"))
             assertTrue(invocation.command.contains("--rootfs=${rootfs.absolutePath}"))
             assertTrue(invocation.command.contains("--bind=${sessionHome.absolutePath}:/root!"))
             assertTrue(invocation.command.contains("--bind=${sessionTemp.absolutePath}:/tmp!"))
@@ -149,6 +156,7 @@ class X11BootstrapPlannerTest {
             }
             assertEquals("noninteractive", invocation.environment["DEBIAN_FRONTEND"])
             assertEquals("none", invocation.environment["APT_LISTCHANGES_FRONTEND"])
+            assertEquals(l2s.absolutePath, invocation.environment["PROOT_L2S_DIR"])
             assertEquals(loader.absolutePath, invocation.environment["PROOT_LOADER"])
         } finally {
             workspace.deleteRecursively()
@@ -160,6 +168,7 @@ class X11BootstrapPlannerTest {
         val workspace = Files.createTempDirectory("anvildesk-x11-bootstrap-verify").toFile()
         try {
             val rootfs = File(workspace, "mutable-rootfs").apply { mkdirs() }
+            val l2s = File(rootfs, ".l2s").apply { mkdirs() }
             File(rootfs, "usr/bin/dpkg-query").apply {
                 parentFile.mkdirs()
                 writeText("dpkg-query")
@@ -185,6 +194,8 @@ class X11BootstrapPlannerTest {
                 "--showformat=\${binary:Package}\\t\${Version}\\t\${db:Status-Abbrev}\\n",
             ) + X11BootstrapPackageSet.PACKAGES
             assertEquals(expectedTail, invocation.command.takeLast(expectedTail.size))
+            assertTrue(invocation.command.contains("-L"))
+            assertTrue(invocation.command.contains("--link2symlink"))
             assertTrue(invocation.command.contains("--bind=${sessionHome.absolutePath}:/root!"))
             assertTrue(invocation.command.contains("--bind=${sessionTemp.absolutePath}:/tmp!"))
             assertFalse(invocation.command.any { it.contains("/etc/resolv.conf") })
@@ -198,6 +209,7 @@ class X11BootstrapPlannerTest {
             listOf("/sdcard", "/storage", "/system", "/vendor").forEach {
                 assertFalse("Unexpected host exposure: $it", fullCommand.contains(it))
             }
+            assertEquals(l2s.absolutePath, invocation.environment["PROOT_L2S_DIR"])
             assertEquals(loader.absolutePath, invocation.environment["PROOT_LOADER"])
         } finally {
             workspace.deleteRecursively()

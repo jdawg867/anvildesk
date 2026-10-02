@@ -19,6 +19,7 @@ import io.github.jdawg867.anvildesk.runtime.RootfsProvisioner
 import io.github.jdawg867.anvildesk.runtime.RootfsProvisioningState
 import io.github.jdawg867.anvildesk.runtime.RootlessRuntimeLauncher
 import io.github.jdawg867.anvildesk.runtime.RootlessRuntimeResult
+import io.github.jdawg867.anvildesk.runtime.X11BootstrapLauncher
 import java.io.File
 import java.util.Locale
 import kotlin.concurrent.thread
@@ -144,6 +145,7 @@ class MainActivity : Activity() {
         var smokeTestButton: Button? = null
         var managedSessionButton: Button? = null
         var packageRuntimeButton: Button? = null
+        var x11BootstrapButton: Button? = null
 
         val installRootfsButton = Button(this).apply {
             text = when {
@@ -171,6 +173,7 @@ class MainActivity : Activity() {
                                         smokeTestButton?.isEnabled = snapshot.arm64Capable
                                         managedSessionButton?.isEnabled = snapshot.arm64Capable
                                         packageRuntimeButton?.isEnabled = snapshot.arm64Capable
+                                        x11BootstrapButton?.isEnabled = snapshot.arm64Capable
                                     }
                                     is RootfsProvisioningState.Failed -> {
                                         text = "Retry verified Ubuntu install"
@@ -197,6 +200,14 @@ class MainActivity : Activity() {
             appCacheDirectory = cacheDir,
             sessionDataDirectory = File(filesDir, "linux-sessions/default"),
             mutableRuntimeStore = mutableRuntimeStore,
+        )
+
+        val x11Launcher = X11BootstrapLauncher(
+            store = rootfsStore,
+            mutableRuntimeStore = mutableRuntimeStore,
+            nativeLibraryDirectory = File(applicationInfo.nativeLibraryDir),
+            appCacheDirectory = cacheDir,
+            sessionDataDirectory = File(filesDir, "linux-sessions/default"),
         )
 
         content.addView(TextView(this).apply {
@@ -365,6 +376,16 @@ class MainActivity : Activity() {
             textSize = 14f
             setPadding(0, (24 * density).toInt(), 0, 0)
         })
+
+        x11BootstrapButton = addX11BootstrapSection(
+            activity = this,
+            content = content,
+            density = density,
+            manifest = manifest,
+            rootfsReady = snapshot.arm64Capable && initialState is RootfsProvisioningState.Ready,
+            runtimeLauncher = runtimeLauncher,
+            x11Launcher = x11Launcher,
+        )
 
         setContentView(ScrollView(this).apply { addView(content) })
     }

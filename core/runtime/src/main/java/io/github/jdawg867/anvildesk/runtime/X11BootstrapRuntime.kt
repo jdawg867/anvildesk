@@ -43,7 +43,7 @@ object X11BootstrapPlanner {
         requirePackageInputs(mutableRootfs, sessionHomeDirectory, sessionTempDirectory, managedResolvConf)
 
         return RootlessRuntimeInvocation(
-            command = baseCommand(runtime, mutableRootfs) + networkBinds(
+            command = baseCommand(runtime, mutableRootfs, link2symlink = false) + networkBinds(
                 sessionHomeDirectory,
                 sessionTempDirectory,
                 managedResolvConf,
@@ -55,7 +55,12 @@ object X11BootstrapPlanner {
                 "APT::Color=0",
                 "update",
             ),
-            environment = packageEnvironment(runtime.loader, hostTempDirectory, mutableRootfs),
+            environment = packageEnvironment(
+                runtime.loader,
+                hostTempDirectory,
+                mutableRootfs,
+                link2symlink = false,
+            ),
         )
     }
 
@@ -69,9 +74,10 @@ object X11BootstrapPlanner {
     ): RootlessRuntimeInvocation {
         val runtime = requireRuntime(mutableRootfs, nativeLibraryDirectory, hostTempDirectory)
         requirePackageInputs(mutableRootfs, sessionHomeDirectory, sessionTempDirectory, managedResolvConf)
+        requirePlainDirectory(File(mutableRootfs, ".l2s"), "PRoot link2symlink state")
 
         return RootlessRuntimeInvocation(
-            command = baseCommand(runtime, mutableRootfs) + networkBinds(
+            command = baseCommand(runtime, mutableRootfs, link2symlink = true) + networkBinds(
                 sessionHomeDirectory,
                 sessionTempDirectory,
                 managedResolvConf,
@@ -87,7 +93,12 @@ object X11BootstrapPlanner {
                 "--no-install-recommends",
                 "install",
             ) + X11BootstrapPackageSet.PACKAGES,
-            environment = packageEnvironment(runtime.loader, hostTempDirectory, mutableRootfs),
+            environment = packageEnvironment(
+                runtime.loader,
+                hostTempDirectory,
+                mutableRootfs,
+                link2symlink = true,
+            ),
         )
     }
 
@@ -107,14 +118,19 @@ object X11BootstrapPlanner {
 
         val format = "\${binary:Package}\\t\${Version}\\t\${db:Status-Abbrev}\\n"
         return RootlessRuntimeInvocation(
-            command = baseCommand(runtime, mutableRootfs) + listOf(
+            command = baseCommand(runtime, mutableRootfs, link2symlink = false) + listOf(
                 "--bind=${sessionHomeDirectory.absolutePath}:/root!",
                 "--bind=${sessionTempDirectory.absolutePath}:/tmp!",
                 GUEST_DPKG_QUERY,
                 "--show",
                 "--showformat=$format",
             ) + X11BootstrapPackageSet.PACKAGES,
-            environment = guestEnvironment(runtime.loader, hostTempDirectory, mutableRootfs),
+            environment = guestEnvironment(
+                runtime.loader,
+                hostTempDirectory,
+                mutableRootfs,
+                link2symlink = false,
+            ),
         )
     }
 
@@ -129,7 +145,6 @@ object X11BootstrapPlanner {
         hostTempDirectory: File,
     ): RuntimeFiles {
         requirePlainDirectory(rootfs, "Mutable runtime rootfs")
-        requirePlainDirectory(File(rootfs, ".l2s"), "PRoot link2symlink state")
         requirePlainDirectory(nativeLibraryDirectory, "Native library")
         requirePlainDirectory(hostTempDirectory, "Rootless runtime temp")
         val proot = File(nativeLibraryDirectory, RootlessRuntimePlanner.PROOT_LIBRARY)
@@ -176,41 +191,49 @@ object X11BootstrapPlanner {
         "--bind=/dev/random:/dev/random!",
     )
 
-    private fun baseCommand(runtime: RuntimeFiles, rootfs: File): List<String> = listOf(
-        runtime.proot.absolutePath,
-        "-L",
-        "--link2symlink",
-        "--kill-on-exit",
-        "--change-id=0:0",
-        "--rootfs=${rootfs.absolutePath}",
-        "--cwd=/root",
-    )
+    private fun baseCommand(
+        runtime: RuntimeFiles,
+        rootfs: File,
+        link2symlink: Boolean,
+    ): List<String> = buildList {
+        add(runtime.proot.absolutePath)
+        add("-L")
+        if (link2symlink) add("--link2symlink")
+        add("--kill-on-exit")
+        add("--change-id=0:0")
+        add("--rootfs=${rootfs.absolutePath}")
+        add("--cwd=/root")
+    }
 
     private fun guestEnvironment(
         loader: File,
         hostTempDirectory: File,
         mutableRootfs: File,
-    ): Map<String, String> = linkedMapOf(
-        "PROOT_NO_SECCOMP" to "1",
-        "PROOT_TMP_DIR" to hostTempDirectory.absolutePath,
-        "PROOT_L2S_DIR" to File(mutableRootfs, ".l2s").absolutePath,
-        "PROOT_LOADER" to loader.absolutePath,
-        "PATH" to "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        "HOME" to "/root",
-        "USER" to "root",
-        "LOGNAME" to "root",
-        "SHELL" to RootlessRuntimePlanner.GUEST_SHELL,
-        "LANG" to "C",
-        "LC_ALL" to "C",
-        "TMPDIR" to "/tmp",
-    )
+        link2symlink: Boolean,
+    ): Map<String, String> = linkedMapOf<String, String>().apply {
+        put("PROOT_NO_SECCOMP", "1")
+        put("PROOT_TMP_DIR", hostTempDirectory.absolutePath)
+        if (link2symlink) {
+            put("PROOT_L2S_DIR", File(mutableRootfs, ".l2s").absolutePath)
+        }
+        put("PROOT_LOADER", loader.absolutePath)
+        put("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+        put("HOME", "/root")
+        put("USER", "root")
+        put("LOGNAME", "root")
+        put("SHELL", RootlessRuntimePlanner.GUEST_SHELL)
+        put("LANG", "C")
+        put("LC_ALL", "C")
+        put("TMPDIR", "/tmp")
+    }
 
     private fun packageEnvironment(
         loader: File,
         hostTempDirectory: File,
         mutableRootfs: File,
+        link2symlink: Boolean,
     ): Map<String, String> =
-        LinkedHashMap(guestEnvironment(loader, hostTempDirectory, mutableRootfs)).apply {
+        LinkedHashMap(guestEnvironment(loader, hostTempDirectory, mutableRootfs, link2symlink)).apply {
             put("DEBIAN_FRONTEND", "noninteractive")
             put("APT_LISTCHANGES_FRONTEND", "none")
         }

@@ -249,7 +249,7 @@ class X11BootstrapLauncher(
     fun refreshIndexes(
         manifest: RootfsManifest,
         dnsServers: List<String>,
-        timeoutMillis: Long = 180_000L,
+        timeoutMillis: Long = 300_000L,
     ): RootlessRuntimeResult {
         validatePackageTimeout(timeoutMillis)
         val context = packageContext(manifest, dnsServers)

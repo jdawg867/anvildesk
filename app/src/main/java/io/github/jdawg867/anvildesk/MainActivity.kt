@@ -210,6 +210,14 @@ class MainActivity : Activity() {
             sessionDataDirectory = File(filesDir, "linux-sessions/default"),
         )
 
+        val xfceLauncher = XfceDesktopLauncher(
+            store = rootfsStore,
+            mutableRuntimeStore = mutableRuntimeStore,
+            nativeLibraryDirectory = File(applicationInfo.nativeLibraryDir),
+            appCacheDirectory = cacheDir,
+            sessionDataDirectory = File(filesDir, "linux-sessions/default"),
+        )
+
         content.addView(TextView(this).apply {
             text = "Linux userspace smoke test"
             textSize = 22f
@@ -385,6 +393,15 @@ class MainActivity : Activity() {
             rootfsReady = snapshot.arm64Capable && initialState is RootfsProvisioningState.Ready,
             runtimeLauncher = runtimeLauncher,
             x11Launcher = x11Launcher,
+        )
+
+        xfceDesktopButton = addXfceDesktopSection(
+            activity = this,
+            content = content,
+            density = density,
+            manifest = manifest,
+            rootfsReady = snapshot.arm64Capable && initialState is RootfsProvisioningState.Ready,
+            xfceLauncher = xfceLauncher,
         )
 
         setContentView(ScrollView(this).apply { addView(content) })

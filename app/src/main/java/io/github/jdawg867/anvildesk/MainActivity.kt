@@ -20,6 +20,7 @@ import io.github.jdawg867.anvildesk.runtime.RootfsProvisioningState
 import io.github.jdawg867.anvildesk.runtime.RootlessRuntimeLauncher
 import io.github.jdawg867.anvildesk.runtime.RootlessRuntimeResult
 import io.github.jdawg867.anvildesk.runtime.X11BootstrapLauncher
+import io.github.jdawg867.anvildesk.runtime.XfceDesktopLauncher
 import java.io.File
 import java.util.Locale
 import kotlin.concurrent.thread
@@ -146,6 +147,7 @@ class MainActivity : Activity() {
         var managedSessionButton: Button? = null
         var packageRuntimeButton: Button? = null
         var x11BootstrapButton: Button? = null
+        var xfceDesktopButton: Button? = null
 
         val installRootfsButton = Button(this).apply {
             text = when {
@@ -174,6 +176,7 @@ class MainActivity : Activity() {
                                         managedSessionButton?.isEnabled = snapshot.arm64Capable
                                         packageRuntimeButton?.isEnabled = snapshot.arm64Capable
                                         x11BootstrapButton?.isEnabled = snapshot.arm64Capable
+                                        xfceDesktopButton?.isEnabled = snapshot.arm64Capable
                                     }
                                     is RootfsProvisioningState.Failed -> {
                                         text = "Retry verified Ubuntu install"

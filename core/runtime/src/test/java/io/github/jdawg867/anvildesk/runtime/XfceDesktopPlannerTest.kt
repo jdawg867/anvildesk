@@ -99,6 +99,8 @@ class XfceDesktopPlannerTest {
                 "APT::Color=0",
                 "-o",
                 "Dpkg::Use-Pty=0",
+                "-o",
+                "Dpkg::Options::=--force-unsafe-io",
                 "--yes",
                 "--no-install-recommends",
                 "install",

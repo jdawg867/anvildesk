@@ -99,6 +99,8 @@ object XfceDesktopPlanner {
                     "APT::Color=0",
                     "-o",
                     "Dpkg::Use-Pty=0",
+                    "-o",
+                    "Dpkg::Options::=--force-unsafe-io",
                     "--yes",
                     "--no-install-recommends",
                     "install",
@@ -294,6 +296,7 @@ object XfceDesktopPlanner {
         LinkedHashMap(guestEnvironment(loader, hostTempDirectory, mutableRootfs, link2symlink)).apply {
             put("DEBIAN_FRONTEND", "noninteractive")
             put("APT_LISTCHANGES_FRONTEND", "none")
+            put("PERL_BADLANG", "0")
         }
 }
 

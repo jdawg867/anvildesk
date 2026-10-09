@@ -24,7 +24,6 @@ object XfceDesktopPackageSet {
         "xfce4-settings",
         "xfce4-appfinder",
         "thunar",
-        "xfce4-terminal",
     )
 
     val REQUIRED_GUEST_BINARIES: List<String> = listOf(
@@ -37,7 +36,6 @@ object XfceDesktopPackageSet {
         "/usr/bin/xfsettingsd",
         "/usr/bin/xfce4-appfinder",
         "/usr/bin/thunar",
-        "/usr/bin/xfce4-terminal",
     )
 }
 

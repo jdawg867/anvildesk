@@ -25,7 +25,6 @@ class XfceDesktopPlannerTest {
                 "xfce4-settings",
                 "xfce4-appfinder",
                 "thunar",
-                "xfce4-terminal",
             ),
             XfceDesktopPackageSet.PACKAGES,
         )
@@ -40,7 +39,6 @@ class XfceDesktopPlannerTest {
                 "/usr/bin/xfsettingsd",
                 "/usr/bin/xfce4-appfinder",
                 "/usr/bin/thunar",
-                "/usr/bin/xfce4-terminal",
             ),
             XfceDesktopPackageSet.REQUIRED_GUEST_BINARIES,
         )

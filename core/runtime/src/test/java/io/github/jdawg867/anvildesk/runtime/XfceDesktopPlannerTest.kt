@@ -118,6 +118,60 @@ class XfceDesktopPlannerTest {
     }
 
     @Test
+    fun recoveryConfiguresOnlyKnownIncompletePackagesInDependencyOrder() {
+        val fixture = Fixture.create("xfce-recovery")
+        try {
+            File(fixture.rootfs, "usr/bin/dpkg").writeText("dpkg")
+            val status = XfcePackageRecoveryPolicy.CONFIGURE_ORDER.joinToString("\n\n") { name ->
+                val state = when (name) {
+                    "tzdata" -> "install ok half-configured"
+                    "xfce4-session" -> "install ok unpacked"
+                    else -> "install ok installed"
+                }
+                "Package: $name\nStatus: $state"
+            }
+            val assessment = XfcePackageRecoveryPolicy.assess(status)
+            assertTrue(assessment.safeToOfferRecovery)
+            val invocation = XfceDesktopPlanner.configureIncompletePackages(
+                fixture.rootfs, fixture.nativeDir, fixture.runtimeTemp,
+                fixture.sessionHome, fixture.sessionTemp, fixture.resolvConf, assessment,
+            )
+            assertEquals(
+                listOf("/usr/bin/dpkg", "--configure", "tzdata", "xfce4-session"),
+                invocation.command.takeLast(4),
+            )
+            assertTrue(invocation.command.contains("--link2symlink"))
+            assertEquals(fixture.l2s.absolutePath, invocation.environment["PROOT_L2S_DIR"])
+            assertRestrictedNetworkBinds(invocation, fixture)
+            assertNoBroadHostExposure(invocation)
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun recoveryRejectsIncompleteOrInvalidAssessments() {
+        val fixture = Fixture.create("xfce-recovery-reject")
+        try {
+            File(fixture.rootfs, "usr/bin/dpkg").writeText("dpkg")
+            val assessment = XfcePackageRecoveryPolicy.assess(
+                "Package: tzdata\nStatus: install ok half-configured",
+            )
+            assertFalse(assessment.safeToOfferRecovery)
+            try {
+                XfceDesktopPlanner.configureIncompletePackages(
+                    fixture.rootfs, fixture.nativeDir, fixture.runtimeTemp,
+                    fixture.sessionHome, fixture.sessionTemp, fixture.resolvConf, assessment,
+                )
+                fail("Expected recovery to refuse incomplete dpkg status")
+            } catch (_: IllegalArgumentException) {
+            }
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
     fun verificationUsesFixedDpkgQueryWithoutNetworkOrHardLinkEmulation() {
         val fixture = Fixture.create("xfce-verify")
         try {

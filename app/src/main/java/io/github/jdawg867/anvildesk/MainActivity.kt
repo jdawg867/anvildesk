@@ -407,6 +407,15 @@ class MainActivity : Activity() {
             xfceLauncher = xfceLauncher,
         )
 
+        addXfceIsolatedValidationSection(
+            activity = this,
+            content = content,
+            density = density,
+            manifest = manifest,
+            rootfsReady = snapshot.arm64Capable && initialState is RootfsProvisioningState.Ready,
+            rootfsStore = rootfsStore,
+        )
+
         setContentView(ScrollView(this).apply { addView(content) })
     }
 

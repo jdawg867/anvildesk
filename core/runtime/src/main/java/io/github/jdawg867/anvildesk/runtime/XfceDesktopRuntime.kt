@@ -114,6 +114,39 @@ object XfceDesktopPlanner {
         )
     }
 
+    /**
+     * Recovery is opt-in and requires a preflight assessment from the mutable
+     * dpkg status database. Never run `dpkg --configure -a` or accept caller-
+     * supplied package names.
+     */
+    fun configureIncompletePackages(
+        mutableRootfs: File,
+        nativeLibraryDirectory: File,
+        hostTempDirectory: File,
+        sessionHomeDirectory: File,
+        sessionTempDirectory: File,
+        managedResolvConf: File,
+        assessment: XfcePackageRecoveryPolicy.Assessment,
+    ): RootlessRuntimeInvocation {
+        require(assessment.safeToOfferRecovery) { "XFCE package recovery is not authorized by the status assessment" }
+        val packages = assessment.packagesToConfigure
+        require(packages.isNotEmpty() && packages.distinct() == packages) { "Invalid recovery package list" }
+        require(XfcePackageRecoveryPolicy.CONFIGURE_ORDER.filter { it in packages } == packages) {
+            "XFCE recovery packages must follow fixed dependency order"
+        }
+        val runtime = requireRuntime(mutableRootfs, nativeLibraryDirectory, hostTempDirectory)
+        requirePackageInputs(mutableRootfs, sessionHomeDirectory, sessionTempDirectory, managedResolvConf)
+        requirePlainDirectory(File(mutableRootfs, ".l2s"), "PRoot link2symlink state")
+        require(File(mutableRootfs, "usr/bin/dpkg").isFile) { "Ubuntu dpkg binary is missing" }
+
+        return RootlessRuntimeInvocation(
+            command = baseCommand(runtime, mutableRootfs, link2symlink = true) +
+                networkBinds(sessionHomeDirectory, sessionTempDirectory, managedResolvConf) +
+                listOf("/usr/bin/dpkg", "--configure") + packages,
+            environment = packageEnvironment(runtime.loader, hostTempDirectory, mutableRootfs, link2symlink = true),
+        )
+    }
+
     fun verify(
         mutableRootfs: File,
         nativeLibraryDirectory: File,

@@ -117,7 +117,7 @@ internal fun addXfceIsolatedValidationSection(
                                 requireSuccessful(stage, verification)
                                 val installed = verification.stdout.lineSequence().filter { it.isNotBlank() }.toList()
                                 check(installed.size == XfceDesktopPackageSet.PACKAGES.size &&
-                                    installed.all { it.trimEnd().endsWith("\tii ") }) {
+                                    installed.all { it.substringAfterLast('\t', missingDelimiterValue = "").startsWith("ii ") }) {
                                     "dpkg-query did not confirm all eight packages installed"
                                 }
                                 stage = "managed session preview"

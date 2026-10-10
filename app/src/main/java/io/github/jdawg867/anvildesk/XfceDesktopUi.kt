@@ -1,5 +1,6 @@
 package io.github.jdawg867.anvildesk
 
+import android.app.AlertDialog
 import android.net.ConnectivityManager
 import android.widget.Button
 import android.widget.LinearLayout
@@ -119,6 +120,87 @@ internal fun addXfceDesktopSection(
         }
     }
     content.addView(button)
+
+    val recoveryStatus = TextView(activity).apply {
+        text = "Optional recovery: inspect incomplete dpkg states without reinstalling packages."
+        textSize = 14f
+        setPadding(0, (12 * density).toInt(), 0, (8 * density).toInt())
+    }
+    content.addView(recoveryStatus)
+
+    val recoveryButton = Button(activity).apply {
+        text = "Inspect XFCE package recovery"
+        isEnabled = rootfsReady && initialError == null
+        setOnClickListener {
+            isEnabled = false
+            recoveryStatus.text = "Inspecting mutable dpkg status (read-only)…"
+            thread(name = "anvildesk-xfce-recovery-inspection") {
+                try {
+                    val assessment = xfceLauncher.assessRecovery(manifest)
+                    activity.runOnUiThread {
+                        when {
+                            assessment.blockers.isNotEmpty() -> {
+                                recoveryStatus.text = "Recovery refused: ${assessment.blockers.joinToString("; ")}"
+                                isEnabled = true
+                            }
+                            !assessment.safeToOfferRecovery -> {
+                                recoveryStatus.text = "No known incomplete XFCE dependencies need configuration."
+                                isEnabled = true
+                            }
+                            else -> {
+                                val approved = assessment.packagesToConfigure.toList()
+                                recoveryStatus.text = "Eligible for explicit configuration: ${approved.joinToString(", ")}"
+                                AlertDialog.Builder(activity)
+                                    .setTitle("Configure incomplete XFCE dependencies?")
+                                    .setMessage(
+                                        "Only these existing unpacked or half-configured packages will be configured:\n\n" +
+                                            approved.joinToString("\n") +
+                                            "\n\nThis modifies the mutable Ubuntu runtime. It does not download packages or reset the rootfs.",
+                                    )
+                                    .setNegativeButton("Cancel") { _, _ -> isEnabled = true }
+                                    .setOnCancelListener { isEnabled = true }
+                                    .setPositiveButton("Configure packages") { _, _ ->
+                                        recoveryStatus.text = "Configuring approved incomplete packages…"
+                                        thread(name = "anvildesk-xfce-recovery") {
+                                            var stage = "dpkg configure"
+                                            try {
+                                                val dns = activeDnsServersForXfce(activity)
+                                                val result = xfceLauncher.recoverIncompletePackages(manifest, dns, approved)
+                                                requireXfceSuccess(stage, result)
+                                                stage = "post-recovery dpkg inspection"
+                                                val after = xfceLauncher.assessRecovery(manifest)
+                                                check(after.blockers.isEmpty() && after.packagesToConfigure.isEmpty()) {
+                                                    "Recovery finished but package states are still incomplete: " +
+                                                        (after.blockers + after.packagesToConfigure).joinToString(", ")
+                                                }
+                                                activity.runOnUiThread {
+                                                    recoveryStatus.text = "Fixed XFCE dependency recovery completed. No known incomplete package states remain."
+                                                    isEnabled = true
+                                                }
+                                            } catch (error: Throwable) {
+                                                activity.runOnUiThread {
+                                                    recoveryStatus.text = "XFCE recovery failed during $stage: " +
+                                                        (error.message ?: error::class.java.simpleName)
+                                                    isEnabled = true
+                                                }
+                                            }
+                                        }
+                                    }
+                                    .show()
+                            }
+                        }
+                    }
+                } catch (error: Throwable) {
+                    activity.runOnUiThread {
+                        recoveryStatus.text = "Recovery inspection failed: " +
+                            (error.message ?: error::class.java.simpleName)
+                        isEnabled = true
+                    }
+                }
+            }
+        }
+    }
+    content.addView(recoveryButton)
 
     content.addView(TextView(activity).apply {
         text = "Milestone 7 installs only the fixed xfce-desktop-core-v1 allowlist in the provenance-linked mutable runtime and constructs a fixed local XFCE session command for Milestone 8. It does not start an X server, open a TCP display listener, expose arbitrary package/shell input, or broaden host filesystem binds."

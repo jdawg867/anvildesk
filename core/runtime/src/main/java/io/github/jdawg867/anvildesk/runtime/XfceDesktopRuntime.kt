@@ -380,6 +380,52 @@ class XfceDesktopLauncher(
         )
     }
 
+    /**
+     * Read-only inspection of the existing mutable dpkg database. Does not run
+     * package operations and never creates or resets a mutable runtime.
+     */
+    fun assessRecovery(manifest: RootfsManifest): XfcePackageRecoveryPolicy.Assessment {
+        val root = mutableRootfs(manifest)
+        val status = File(root, XfcePackageRecoveryPolicy.DPKG_STATUS_RELATIVE_PATH)
+        require(status.isFile && !Files.isSymbolicLink(status.toPath())) {
+            "Mutable dpkg status database is missing or is a symlink"
+        }
+        require(status.length() in 1L..8_000_000L) {
+            "Mutable dpkg status database size is outside the inspection limit"
+        }
+        return XfcePackageRecoveryPolicy.assess(status.readText(Charsets.UTF_8))
+    }
+
+    /**
+     * Caller must obtain explicit user approval. A fresh preflight is required
+     * immediately before invocation; no arbitrary names or broad dpkg repair.
+     */
+    fun recoverIncompletePackages(
+        manifest: RootfsManifest,
+        dnsServers: List<String>,
+        approvedPackages: List<String>,
+        timeoutMillis: Long = XfceDesktopPackageSet.INSTALL_TIMEOUT_MILLIS,
+    ): RootlessRuntimeResult {
+        validatePackageTimeout(timeoutMillis)
+        val assessment = assessRecovery(manifest)
+        require(assessment.safeToOfferRecovery && assessment.packagesToConfigure == approvedPackages) {
+            "XFCE package recovery state changed since approval; inspect again"
+        }
+        val context = packageContext(manifest, dnsServers)
+        return execute(
+            XfceDesktopPlanner.configureIncompletePackages(
+                mutableRootfs = context.mutableRoot,
+                nativeLibraryDirectory = nativeLibraryDirectory,
+                hostTempDirectory = context.runtimeTemp,
+                sessionHomeDirectory = context.home,
+                sessionTempDirectory = context.temp,
+                managedResolvConf = context.resolvConf,
+                assessment = assessment,
+            ),
+            timeoutMillis,
+        )
+    }
+
     fun verify(
         manifest: RootfsManifest,
         timeoutMillis: Long = 60_000L,

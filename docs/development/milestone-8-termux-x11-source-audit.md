@@ -101,3 +101,46 @@ lifecycle design.
 5. Only then run an **isolated CI source-build spike** pinned to the
    specified commit and submodule refs. Its success must not change
    the existing signed-device APK or any Samsung runtime.
+
+
+## JNI/socket bridge findings and mandatory security blocker
+
+Pinned upstream source:
+- `lorie/src/main/cpp/lorie/cmdentrypoint.cpp`
+- `lorie/src/main/java/com/termux/x11/CmdEntryPoint.java`
+- `lorie/src/main/java/com/termux/x11/LorieView.java`
+
+The native `start()` launches `dix_main` on a pthread, with
+`TMPDIR` driving `xtrans_unix_path_x11` / `xtrans_unix_dir_x11`
+(`<TMPDIR>/.X11-unix/X`). This supports a candidate private
+filesystem socket mapping but does **not** establish Android/PRoot
+connectivity or Xauthority protection.
+
+`LorieView` extends Android `SurfaceView`, forwards
+`surfaceChanged` and `surfaceDestroyed` to JNI, and provides
+native input/viewport methods. Its `connect(int fd)` path is
+separate from the guest X11 socket and needs careful lifecycle mapping.
+
+**Hard blocker at pinned upstream `cmdentrypoint.cpp`:
+`lorieListenForKnocks()` creates `socket(AF_INET, SOCK_STREAM)`,
+binds `INADDR_ANY`, and calls `listen(fd, 5)`. This is a TCP
+control/notification port, not necessarily an X11 protocol listener,
+but it still violates AnvilDesk's strict no-network-listener policy.
+The upstream `CmdEntryPoint.java` uses broadcast-based service
+discovery as part of this design, and its command-entry context probes
+Android internal APIs. The unmodified server must never ship in M8.
+
+**Integration decision:** replace the TCP knock/broadcast mechanism
+with an app-owned in-process lifecycle notification (or a strictly
+app-private Unix-domain control socket if isolation requires it), and
+remove any optional network listening paths. Implement guarded
+socket + Xauthority creation and a narrow PRoot bind. Only then
+can the pinned native build move from evidence to an AnvilDesk
+integration build. Do not silently weaken the no-TCP gate to
+"loopback only".
+
+The CI audit guard in `scripts/verify-m8-upstream-no-tcp.py` is a
+negative control: it **must reject the unmodified pinned source**.
+It is not proof that a subsequently patched server has no possible
+network surface. That will require source review and runtime socket
+inspection on the device.

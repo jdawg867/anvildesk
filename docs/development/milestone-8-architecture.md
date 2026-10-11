@@ -201,3 +201,24 @@ A successful future acceptance test must confirm all of the following on a physi
 6. Existing M7 production and isolated runtime provenance records remain unchanged.
 
 No M8 runtime test or Android APK installation has yet proven these conditions. Do not advertise the XFCE session as ready.
+
+
+## M8 merge gate — explicit status after authentication and guest probe planning
+
+Implemented on the M8 feature branch, but not yet wired to a running Android-native X server:
+
+- Disposable pinned-upstream compile patch removes its `INADDR_ANY` TCP notification listener; the isolated upstream compilation workflow has passed.
+- `M8PrivateSocketWorkspace` validates owner-only app-private Unix socket directories without deleting existing state.
+- `M8X11LaunchGate` creates a new owner-private MIT-MAGIC-COOKIE-1 Xauthority file and plans a `-nolisten tcp -auth` native launch.
+- `M8GuestDisplayBridge` composes PRoot guest home/temp mounts **before** narrower socket-directory and authority-file mounts, and refuses missing guest bind targets.
+- `RootlessRuntimePlanner.m8AuthenticatedDisplayProbe` plans a shell-free `/usr/bin/xdpyinfo -display :0` process with the restricted environment.
+
+**Not demonstrated and required before merge:**
+1. Embed/build the patched upstream native X11 implementation in the AnvilDesk APK; the current upstream compile workflow only builds an isolated upstream app and stores diagnostic artifacts.
+2. Replace its broadcast/Termux-specific entry point with an AnvilDesk-owned native server lifecycle and Android Surface/input channel.
+3. Ensure `xdpyinfo` and validated bind targets exist in a disposable/isolated guest without modifying M7 production or isolated validation environments.
+4. Demonstrate on a physical rootless Android device that an authenticated guest handshake succeeds, an unauthenticated handshake fails, the X11 socket is private, no network listeners exist, and teardown/restart is clean.
+5. Review upstream GPLv3 and all transitive licensing/source-distribution obligations, as well as merged Android manifest components and permissions.
+6. Confirm all required GitHub Actions checks green for final head and record device results in PR #21.
+
+**Merge decision:** keep PR #21 draft and unmerged until the above acceptance evidence exists. Source compilation, planner tests, and static audit alone are not a substitute for live device validation.

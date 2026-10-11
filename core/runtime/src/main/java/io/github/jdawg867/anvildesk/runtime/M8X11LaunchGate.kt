@@ -42,11 +42,11 @@ class M8X11LaunchGate(private val workspace: M8PrivateSocketWorkspace) {
         val file = File(layout.root, "Xauthority")
         val cookie = ByteArray(16).also { SecureRandom().nextBytes(it) }
         // Xauthority binary file: family, address, number, name, cookie as big-endian u16-length fields.
-        // FamilyLocal=256, empty address. Display number is "0".
+        // FamilyWild=65535 matches the display irrespective of host naming; cookie remains secret.
         val record = java.io.ByteArrayOutputStream().apply {
             fun put16(value: Int) { write((value ushr 8) and 255); write(value and 255) }
             fun field(bytes: ByteArray) { put16(bytes.size); write(bytes) }
-            put16(256)
+            put16(65535)
             field(byteArrayOf())
             field("0".toByteArray(Charsets.US_ASCII))
             field("MIT-MAGIC-COOKIE-1".toByteArray(Charsets.US_ASCII))

@@ -20,8 +20,8 @@ object M8GuestDisplayBridge {
         workspace: M8PrivateSocketWorkspace,
         layout: M8PrivateSocketWorkspace.Layout,
         authority: File,
-        guestAuthorityTarget: File,
-        guestSocketDirectory: File,
+        sessionHomeDirectory: File,
+        sessionTempDirectory: File,
     ): Plan {
         require(workspace.inspect() == layout) { "Unvalidated M8 workspace" }
         require(authority == File(layout.root, "Xauthority")) { "Unexpected Xauthority location" }
@@ -30,6 +30,12 @@ object M8GuestDisplayBridge {
             setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)) {
             "Xauthority permissions must be owner-only"
         }
+        val guestAuthorityTarget = File(sessionHomeDirectory, ".Xauthority")
+        val guestSocketDirectory = File(sessionTempDirectory, ".X11-unix")
+        require(Files.isDirectory(sessionHomeDirectory.toPath(), LinkOption.NOFOLLOW_LINKS))
+        require(Files.isDirectory(sessionTempDirectory.toPath(), LinkOption.NOFOLLOW_LINKS))
+        require(!Files.isSymbolicLink(sessionHomeDirectory.toPath()))
+        require(!Files.isSymbolicLink(sessionTempDirectory.toPath()))
         // The guest's bind targets must be prepared and validated separately;
         // never create or replace them in an existing Ubuntu runtime here.
         require(Files.isRegularFile(guestAuthorityTarget.toPath(), LinkOption.NOFOLLOW_LINKS)) {
@@ -42,6 +48,8 @@ object M8GuestDisplayBridge {
         require(!Files.isSymbolicLink(guestSocketDirectory.toPath()))
         return Plan(
             binds = listOf(
+                "--bind=${sessionHomeDirectory.absolutePath}:/root!",
+                "--bind=${sessionTempDirectory.absolutePath}:/tmp!",
                 "--bind=${layout.socketDirectory.absolutePath}:/tmp/.X11-unix!",
                 "--bind=${authority.absolutePath}:/root/.Xauthority!",
             ),

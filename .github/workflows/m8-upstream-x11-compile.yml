@@ -2,6 +2,11 @@ name: M8 upstream X11 ARM64 compile spike
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/android-x11-display-input
+    paths:
+      - '.github/workflows/m8-upstream-x11-compile.yml'
 
 permissions:
   contents: read

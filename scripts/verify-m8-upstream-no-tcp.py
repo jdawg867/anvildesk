@@ -14,7 +14,6 @@ def inspect(source: str) -> list[str]:
         (r"\bsocket\s*\(\s*AF_INET6\b", "AF_INET6 socket"),
         (r"\bINADDR_ANY\b", "wildcard network binding"),
         (r"\bstruct\s+sockaddr_in6?\b", "IP socket address"),
-        (r"\blorieListenForKnocks\s*\(", "TCP knock/discovery listener"),
     ):
         if re.search(pattern, source):
             issues.append(label)

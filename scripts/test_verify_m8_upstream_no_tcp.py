@@ -15,8 +15,8 @@ class NetworkGuardTest(unittest.TestCase):
         self.assertTrue(guard.inspect("socket(AF_INET6, SOCK_STREAM, 0);"))
     def test_accepts_local_socketpair(self):
         self.assertEqual([], guard.inspect("socketpair(AF_UNIX, SOCK_STREAM, 0, fds);"))
-    def test_does_not_confuse_commentary_for_test_pass(self):
-        self.assertTrue(guard.inspect("lorieListenForKnocks(6000);"))
+    def test_callback_name_alone_is_not_network_behavior(self):
+        self.assertEqual([], guard.inspect("void lorieListenForKnocks(int port) { (void) port; }"))
 
 if __name__ == "__main__":
     unittest.main()

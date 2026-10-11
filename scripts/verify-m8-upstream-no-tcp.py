@@ -13,6 +13,7 @@ def inspect(source: str) -> list[str]:
         (r"\bsocket\s*\(\s*AF_INET\b", "AF_INET socket"),
         (r"\bsocket\s*\(\s*AF_INET6\b", "AF_INET6 socket"),
         (r"\bINADDR_ANY\b", "wildcard network binding"),
+        (r"\bexit\s*\(\s*dix_main\s*\(", "native server exits host process"),
         (r"\bstruct\s+sockaddr_in6?\b", "IP socket address"),
     ):
         if re.search(pattern, source):

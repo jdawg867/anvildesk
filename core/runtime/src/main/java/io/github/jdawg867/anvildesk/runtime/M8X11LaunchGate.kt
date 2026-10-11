@@ -4,6 +4,8 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.security.SecureRandom
+import java.nio.file.attribute.PosixFilePermissions
+import java.nio.file.StandardOpenOption
 
 /** Prepares X11 authentication and validates launch prerequisites; does not execute native code. */
 class M8X11LaunchGate(private val workspace: M8PrivateSocketWorkspace) {
@@ -52,13 +54,11 @@ class M8X11LaunchGate(private val workspace: M8PrivateSocketWorkspace) {
             field("MIT-MAGIC-COOKIE-1".toByteArray(Charsets.US_ASCII))
             field(cookie)
         }.toByteArray()
-        Files.newOutputStream(file.toPath(), java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE).use {
-            it.write(record)
+        Files.newByteChannel(file.toPath(), setOf(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE),
+            PosixFilePermissions.asFileAttribute("rw-------")).use { channel ->
+            val buffer = java.nio.ByteBuffer.wrap(record)
+            while (buffer.hasRemaining()) channel.write(buffer)
         }
-        Files.setPosixFilePermissions(file.toPath(), setOf(
-            java.nio.file.attribute.PosixFilePermission.OWNER_READ,
-            java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
-        ))
         cookie.fill(0)
         return file
     }

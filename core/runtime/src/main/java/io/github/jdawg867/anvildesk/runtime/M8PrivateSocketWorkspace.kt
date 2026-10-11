@@ -4,6 +4,7 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.attribute.PosixFilePermission
+import java.nio.file.attribute.PosixFilePermissions
 
 /** Owns only the dedicated M8 transport namespace; never touches M7 data. */
 class M8PrivateSocketWorkspace(private val appFiles: File) {
@@ -48,14 +49,11 @@ class M8PrivateSocketWorkspace(private val appFiles: File) {
             "Previous M8 session namespace exists; refusing destructive reuse"
         }
         // Parent is app-private; no caller-supplied path and no recursive deletion.
-        Files.createDirectory(root.toPath())
-        Files.setPosixFilePermissions(root.toPath(), ownerOnly)
+        Files.createDirectory(root.toPath(), PosixFilePermissions.asFileAttribute(ownerOnly))
         val tmp = File(root, "tmp")
-        Files.createDirectory(tmp.toPath())
-        Files.setPosixFilePermissions(tmp.toPath(), ownerOnly)
+        Files.createDirectory(tmp.toPath(), PosixFilePermissions.asFileAttribute(ownerOnly))
         val sockets = File(tmp, ".X11-unix")
-        Files.createDirectory(sockets.toPath())
-        Files.setPosixFilePermissions(sockets.toPath(), ownerOnly)
+        Files.createDirectory(sockets.toPath(), PosixFilePermissions.asFileAttribute(ownerOnly))
         return inspect()
     }
 

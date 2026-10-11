@@ -20,8 +20,10 @@ class M8GuestDisplayBridgeTest {
             guestAuth.createNewFile()
             val guestSocketDir = File(guestRoot, "tmp/.X11-unix")
             guestSocketDir.mkdirs()
-            val plan = M8GuestDisplayBridge.plan(workspace, layout, authority, guestAuth, guestSocketDir)
+            val plan = M8GuestDisplayBridge.plan(workspace, layout, authority, File(guestRoot, "root"), File(guestRoot, "tmp"))
             assertEquals(listOf(
+                "--bind=${File(guestRoot, "root").absolutePath}:/root!",
+                "--bind=${File(guestRoot, "tmp").absolutePath}:/tmp!",
                 "--bind=${layout.socketDirectory.absolutePath}:/tmp/.X11-unix!",
                 "--bind=${authority.absolutePath}:/root/.Xauthority!",
             ), plan.binds)
@@ -42,7 +44,7 @@ class M8GuestDisplayBridgeTest {
             val missing = File(files, "missing")
             val socketDir = File(files, "guest-tmp").apply { mkdir() }
             try {
-                M8GuestDisplayBridge.plan(workspace, layout, authority, missing, socketDir)
+                M8GuestDisplayBridge.plan(workspace, layout, authority, File(files, "guest-home").apply { mkdir() }, socketDir)
                 fail("Missing guest authority target accepted")
             } catch (_: IllegalArgumentException) {}
             assertTrue(!missing.exists())

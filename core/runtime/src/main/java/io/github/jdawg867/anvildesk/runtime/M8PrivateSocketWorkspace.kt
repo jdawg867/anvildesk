@@ -57,9 +57,9 @@ class M8PrivateSocketWorkspace(private val appFiles: File) {
         return inspect()
     }
 
-    fun guestTempBind(layout: Layout): String {
+    fun guestSocketBind(layout: Layout): String {
         require(layout == inspect()) { "M8 namespace changed after preparation" }
-        // Fixed narrow session bind, not Android /tmp or public storage.
-        return "--bind=${layout.tmp.absolutePath}:/tmp!"
+        // Keep the existing managed guest /tmp; overlay only its .X11-unix directory.
+        return "--bind=${layout.socketDirectory.absolutePath}:/tmp/.X11-unix!"
     }
 }

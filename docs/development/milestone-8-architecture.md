@@ -181,3 +181,23 @@ submodule SHAs; map Android app/service/JNI/native ownership; specify how the
 server is started and stopped with private socket, no independent Termux
 installation or UID, and no TCP X11 listener; then validate ARM64 compilation
 with the pinned toolchain.
+
+
+## Private socket and Xauthority preflight (M8 development checkpoint)
+
+The Android runtime module now contains non-launching safety components:
+- `M8PrivateDisplayContract` checks a fixed app-private `m8-display` namespace and readiness/lifecycle transitions.
+- `M8PrivateSocketWorkspace` prepares `m8-display/tmp/.X11-unix` with owner-only directory permissions and refuses existing session/socket paths.
+- `M8X11LaunchGate` writes a fresh 16-byte MIT-MAGIC-COOKIE-1 credential in an Xauthority binary record, without shelling out, and plans `:0 -nolisten tcp -auth <app-private authority>`.
+
+**Unfinished integration boundary:** The rootless PRoot guest and the native X server must see the same socket directory. The host's `m8-display/tmp` must be selectively visible to the guest as `/tmp`, with no overwrite of the existing M7 mutable rootfs. The guest must receive the same authentication record via an intentionally scoped read-only bind and matching `XAUTHORITY` environment variable. Validate that the chosen PRoot bind syntax, guest identity and Xauthority path actually work; current planning helpers do not establish that.
+
+A successful future acceptance test must confirm all of the following on a physical Android device:
+1. Modified native server is running inside AnvilDesk, with no listening TCP sockets.
+2. The filesystem Unix-domain socket exists at the expected private path and is usable by the guest.
+3. An unauthenticated X11 request is rejected.
+4. A guest `xdpyinfo -display :0` using the scoped authority succeeds.
+5. Native server teardown and a second session start work without stale sockets.
+6. Existing M7 production and isolated runtime provenance records remain unchanged.
+
+No M8 runtime test or Android APK installation has yet proven these conditions. Do not advertise the XFCE session as ready.

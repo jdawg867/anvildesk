@@ -92,3 +92,58 @@ check touch/pointer/key/scroll. Test rotation, disconnect, app background,
 server crash, and clean stop. Verify socket is private, no TCP listener
 exists, and production rootfs provenance remains unchanged. Capture
 reproducible logs, signed APK SHA, CI, and on-device result. Only then merge.
+
+
+## Initial backend comparison — research checkpoint
+
+**Candidate A: Termux:X11 architecture (leading reference, not yet selected).**
+Upstream: https://github.com/termux/termux-x11 . Upstream describes
+a complete Android NDK-based X server, Android 8+ support, a dedicated
+Android app plus companion Termux package, a Git-submodule-based source
+tree, and GPLv3 licensing. This is evidence of a mature integration
+reference, **not** evidence that an unmodified upstream binary can be
+embedded within AnvilDesk's process/package namespace. A direct port or
+source-derived integration must establish license compatibility,
+reproducible ARM64 native compilation, JNI/Surface lifecycle, guest socket
+ownership, and isolation without Termux's package/shared UID assumptions.
+
+**Candidate B: XServer XSDL (alternative reference).**
+Upstream: https://github.com/pelya/xserver-xsdl . The project ports an
+X.Org server using SDL, but its README reports lack of XRANDR support
+and problematic text input, and its Android build uses a patched SDL
+tree. Those are significant risks to M8 rotation and input criteria.
+Do not select it solely because it displays X11 content.
+
+**Candidate C: a managed, localhost-only VNC display backend.**
+A VNC server rendering an X11 desktop plus an embedded Android viewer
+could simplify framebuffer/input integration and retain XFCE in a private
+guest runtime. However it introduces a distinct VNC protocol and display
+server, explicit loopback transport, authentication and lifecycle design,
+and may violate the no-TCP-listener gate if implemented naively.
+Treat only as a contingency after evaluating Unix socket capability.
+
+### Decision
+
+Proceed with a **Termux:X11 upstream source/design audit** before
+selecting or shipping any binary. Determine whether X server protocol
+and framebuffer components can run in-process under AnvilDesk, using
+only app-owned sockets and no additional Termux app/package. Do not
+copy nightly APKs or promise embedding without a reproducible build and
+GPLv3 obligations review. Keep the app's M7 session command unchanged
+until the server path is demonstrably ready.
+
+### Validation questions for next checkpoint
+
+- Can the upstream native server/JNI components compile for our pinned
+  NDK and the app's minSdk/targetSdk without another app UID?
+- Can we direct the display socket into AnvilDesk's app-private
+  filesystem with secure ownership and narrow PRoot guest mapping?
+- Does it provide usable direct Android Surface rendering and actual
+  touch/keyboard/scroll mapping without custom invasive patches?
+- What GPLv3 source-distribution and dependency license obligations
+  would apply to an AnvilDesk binary distribution?
+- Can automated tests verify there is no AF_INET/AF_INET6 X11 listener,
+  and can the Samsung prove real X11 client connection and cleanup?
+
+External-source findings above reflect the upstream project READMEs;
+they do not assert that the AnvilDesk integration already works.

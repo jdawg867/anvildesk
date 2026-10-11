@@ -19,7 +19,7 @@ class M8PrivateSocketWorkspaceTest {
             val workspace = M8PrivateSocketWorkspace(files)
             val layout = workspace.prepare()
             assertEquals(File(files, "m8-display/tmp/.X11-unix/X0"), layout.socket)
-            assertEquals("--bind=${layout.tmp.absolutePath}:/tmp!", workspace.guestTempBind(layout))
+            assertEquals("--bind=${layout.socketDirectory.absolutePath}:/tmp/.X11-unix!", workspace.guestSocketBind(layout))
             assertFalse(layout.socket.exists())
             val owner = setOf(PosixFilePermission.OWNER_READ,
                 PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE)

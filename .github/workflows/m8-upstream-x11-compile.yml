@@ -7,6 +7,8 @@ on:
       - feature/android-x11-display-input
     paths:
       - '.github/workflows/m8-upstream-x11-compile.yml'
+      - 'scripts/verify-m8-upstream-no-tcp.py'
+      - 'scripts/test_verify_m8_upstream_no_tcp.py'
 
 permissions:
   contents: read
@@ -30,6 +32,20 @@ jobs:
             echo "STOP: uninitialized or mismatched submodules"
             exit 1
           fi
+      - name: Checkout AnvilDesk guard
+        uses: actions/checkout@v4
+        with:
+          path: anvildesk-guard
+      - name: Verify source policy guard rejects unmodified upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s anvildesk-guard/scripts -p 'test_verify_m8_upstream_no_tcp.py' -v
+          if python3 anvildesk-guard/scripts/verify-m8-upstream-no-tcp.py upstream/lorie/src/main/cpp/lorie/cmdentrypoint.cpp; then
+            echo "STOP: expected pinned upstream to fail no-TCP policy; audit assumptions changed"
+            exit 1
+          fi
+          echo "EXPECTED_REJECTION=PASS (upstream unmodified TCP listener blocked)"
       - name: Install native host generators
         run: sudo apt-get update && sudo apt-get install -y bison flex ninja-build cmake python3 patch
       - name: Java 17

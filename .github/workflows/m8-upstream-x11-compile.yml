@@ -72,6 +72,19 @@ jobs:
           ./gradlew :lorie-app:assembleStandaloneDebug --no-daemon --stacktrace 2>&1 | tee ../m8-upstream-build.log
           find lorie/build -type f \( -name '*.so' -o -name '*.a' \) -print | tee ../m8-native-outputs.txt
           grep -E '\.so$' ../m8-native-outputs.txt
+      - name: Package and inspect patched upstream library AAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd upstream
+          ./gradlew :lorie:assembleDebug --no-daemon --stacktrace 2>&1 | tee ../m8-upstream-aar-build.log
+          mapfile -t aars < <(find lorie/build/outputs/aar -type f -name '*.aar' | sort)
+          test "${#aars[@]}" -gt 0
+          for aar in "${aars[@]}"; do
+            unzip -l "$aar"
+            unzip -p "$aar" AndroidManifest.xml
+          done > ../m8-upstream-aar-inventory.txt
+          printf '%s\n' "${aars[@]}" > ../m8-upstream-aar-paths.txt
       - name: Record source and native build output hashes
         if: success()
         shell: bash
@@ -91,3 +104,6 @@ jobs:
             m8-native-outputs.txt
             m8-native-sha256.txt
             m8-no-tcp-source.patch
+            m8-upstream-aar-build.log
+            m8-upstream-aar-inventory.txt
+            m8-upstream-aar-paths.txt

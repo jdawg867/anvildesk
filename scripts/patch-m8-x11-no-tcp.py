@@ -14,7 +14,12 @@ void lorieListenForKnocks(int port, const char *tag) {
                               tag ? serverEnv->NewStringUTF(tag) : nullptr);
 }
 '''
-NATIVE_EXIT = "        exit(dix_main(argc, (char**) argv, (char*[]) { nullptr }));"\nSAFE_RETURN = """        const int serverStatus = dix_main(argc, (char**) argv, (char*[]) { nullptr });\n        log(INFO, "X server thread ended with status %d", serverStatus);\n        return nullptr;"""\n\ndef patch(source: str) -> str:
+NATIVE_EXIT = "        exit(dix_main(argc, (char**) argv, (char*[]) { nullptr }));"
+SAFE_RETURN = """        const int serverStatus = dix_main(argc, (char**) argv, (char*[]) { nullptr });
+        log(INFO, "X server thread ended with status %d", serverStatus);
+        return nullptr;"""
+
+def patch(source: str) -> str:
     if source.count(START) != 1 or source.count(END) != 1:
         raise ValueError("Unexpected upstream native entrypoint structure")
     left, after_start = source.split(START, 1)
@@ -22,7 +27,10 @@ NATIVE_EXIT = "        exit(dix_main(argc, (char**) argv, (char*[]) { nullptr })
     for evidence in ("socket(AF_INET", "INADDR_ANY", "SetNotifyFd(", "sendBroadcastDelayed"):
         if evidence not in removed:
             raise ValueError("Pinned upstream TCP implementation does not match")
-    patched = left + REPLACEMENT + END + right\n    if patched.count(NATIVE_EXIT) != 1:\n        raise ValueError("Pinned upstream process-exit behavior does not match")\n    return patched.replace(NATIVE_EXIT, SAFE_RETURN)
+    patched = left + REPLACEMENT + END + right
+    if patched.count(NATIVE_EXIT) != 1:
+        raise ValueError("Pinned upstream process-exit behavior does not match")
+    return patched.replace(NATIVE_EXIT, SAFE_RETURN)
 
 def main() -> int:
     if len(sys.argv) != 2:

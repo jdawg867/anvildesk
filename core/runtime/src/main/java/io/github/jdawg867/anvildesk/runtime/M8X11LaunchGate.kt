@@ -55,7 +55,7 @@ class M8X11LaunchGate(private val workspace: M8PrivateSocketWorkspace) {
             field(cookie)
         }.toByteArray()
         Files.newByteChannel(file.toPath(), setOf(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE),
-            PosixFilePermissions.asFileAttribute("rw-------")).use { channel ->
+            PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------"))).use { channel ->
             val buffer = java.nio.ByteBuffer.wrap(record)
             while (buffer.hasRemaining()) channel.write(buffer)
         }

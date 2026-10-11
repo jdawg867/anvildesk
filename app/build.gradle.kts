@@ -2,6 +2,8 @@ plugins {
     id("com.android.application")
 }
 
+val m8PackagingSpike = providers.gradleProperty("anvildeskM8PackagingSpike").orNull == "true"
+
 val developmentKeystorePath = providers.environmentVariable("ANVILDESK_DEV_KEYSTORE").orNull
 val developmentStorePassword = providers.environmentVariable("ANVILDESK_DEV_STORE_PASSWORD").orNull
 val developmentKeyAlias = providers.environmentVariable("ANVILDESK_DEV_KEY_ALIAS").orNull
@@ -52,6 +54,10 @@ android {
 
     buildTypes {
         getByName("debug") {
+            if (m8PackagingSpike) {
+                applicationIdSuffix = ".m8spike"
+                versionNameSuffix = "-m8-spike"
+            }
             if (developmentSigningComplete) {
                 signingConfig = signingConfigs.getByName("ciDevelopment")
             }
@@ -59,6 +65,9 @@ android {
     }
 
     sourceSets.getByName("main").jniLibs.srcDir("build/generated/rootless-runtime/jniLibs")
+    if (m8PackagingSpike) {
+        sourceSets.getByName("main").jniLibs.srcDir("build/generated/m8-x11/jniLibs")
+    }
 
     packaging {
         jniLibs {

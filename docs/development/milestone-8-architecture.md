@@ -147,3 +147,37 @@ until the server path is demonstrably ready.
 
 External-source findings above reflect the upstream project READMEs;
 they do not assert that the AnvilDesk integration already works.
+
+
+## Termux:X11 upstream README audit — integration constraints
+
+Source reviewed: https://github.com/termux/termux-x11 (upstream README,
+2026-10-10). This is a **source-level compatibility assessment**, not a
+successful AnvilDesk build.
+
+Confirmed from upstream documentation:
+
+- It is an Android NDK-built X server with an Android app and a separate
+  Termux-side companion package in the standard deployment.
+- The repo requires recursive Git submodules; a top-level checkout alone is
+  insufficient for a reproducible native build.
+- Proot deployments use a **shared /tmp** (or mapped TMPDIR), directly
+  relevant to AnvilDesk's restricted session temp bind. The socket mapping
+  must be explicit and checked, not implemented by exposing Android /tmp.
+- A distinct shared-UID APK variant is offered for Termux integration, with
+  signature-matching restrictions; AnvilDesk cannot assume it can share
+  Termux's UID.
+- Upstream documents launch from third-party apps, but that does not prove
+  support for in-process embedding.
+- Upstream supports tap/scroll gestures and DPI customization, which can
+  inform our Android input UX, though actual integration remains unverified.
+- Published license is GPLv3. Reuse/copying is gated on satisfying license
+  and source distribution requirements.
+
+**Gate result:** research is sufficient to justify examining the upstream
+modules and build system, but insufficient to approve an X server binary for
+AnvilDesk. Next audited deliverable must pin a specific upstream commit and
+submodule SHAs; map Android app/service/JNI/native ownership; specify how the
+server is started and stopped with private socket, no independent Termux
+installation or UID, and no TCP X11 listener; then validate ARM64 compilation
+with the pinned toolchain.

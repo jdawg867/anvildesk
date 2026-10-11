@@ -222,3 +222,12 @@ Implemented on the M8 feature branch, but not yet wired to a running Android-nat
 6. Confirm all required GitHub Actions checks green for final head and record device results in PR #21.
 
 **Merge decision:** keep PR #21 draft and unmerged until the above acceptance evidence exists. Source compilation, planner tests, and static audit alone are not a substitute for live device validation.
+
+
+## Isolated native packaging spike (not the M8 integration acceptance test)
+
+The `-PanvildeskM8PackagingSpike=true` Gradle option is deliberately opt-in and changes the debug Android application ID to `io.github.jdawg867.anvildesk.m8spike`. Only this variant includes `app/build/generated/m8-x11/jniLibs/arm64-v8a/libXlorie.so`, which the pinned upstream build produces after applying the reviewed native TCP/host-process exit patches. It does not include or merge upstream Java components or its unsafe Android manifest. The stock AnvilDesk package ID and production rootless runtime remain unchanged.
+
+The dedicated GitHub Actions compile workflow stages the patched ARM64 library into that variant, builds a separate APK, checks the package ID and exact library entry, and uploads a diagnostic artifact on success. This is **native packaging evidence only**: the resulting APK has no integrated `LorieView`, no app-controlled X server start/stop interface, no authenticated socket handshake, and no XFCE rendering. The test APK explicitly announces this limitation on its startup screen. Do not install it as an upgrade to the production AnvilDesk app or cite it as M8 acceptance.
+
+The upstream source remains pinned at `termux/termux-x11@fa3a8b430e2896a19f44c99a9cb056254615ae06`. Native patch evidence and provenance logs remain associated with the same workflow. Review upstream source redistribution, notices, and the full dependency license inventory before a public release.

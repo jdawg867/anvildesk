@@ -9,6 +9,7 @@ on:
       - '.github/workflows/m8-upstream-x11-compile.yml'
       - 'scripts/verify-m8-upstream-no-tcp.py'
       - 'scripts/test_verify_m8_upstream_no_tcp.py'
+      - 'scripts/test_patch_m8_x11_no_tcp.py'
       - 'scripts/patch-m8-x11-no-tcp.py'
 
 permissions:
@@ -41,7 +42,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m unittest discover -s anvildesk-guard/scripts -p 'test_verify_m8_upstream_no_tcp.py' -v
+          python3 -m unittest discover -s anvildesk-guard/scripts -p 'test_*m8*.py' -v
           if python3 anvildesk-guard/scripts/verify-m8-upstream-no-tcp.py upstream/lorie/src/main/cpp/lorie/cmdentrypoint.cpp; then
             echo "STOP: expected pinned upstream to fail no-TCP policy; audit assumptions changed"
             exit 1

@@ -11,6 +11,8 @@ class NetworkGuardTest(unittest.TestCase):
     def test_rejects_pinned_upstream_pattern(self):
         source = "int fd = socket(AF_INET, SOCK_STREAM, 0); struct sockaddr_in a = {.sin_addr={.s_addr=INADDR_ANY}}; void lorieListenForKnocks(int port) {}"
         self.assertTrue(guard.inspect(source))
+    def test_rejects_server_thread_exit(self):
+        self.assertTrue(guard.inspect("exit(dix_main(argc, argv, nullptr));"))
     def test_rejects_ipv6(self):
         self.assertTrue(guard.inspect("socket(AF_INET6, SOCK_STREAM, 0);"))
     def test_accepts_local_socketpair(self):

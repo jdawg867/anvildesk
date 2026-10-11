@@ -8,6 +8,7 @@ on:
     paths:
       - '.github/workflows/m8-upstream-x11-compile.yml'
       - 'app/build.gradle.kts'
+      - 'app/src/main/java/io/github/jdawg867/anvildesk/MainActivity.kt'
       - 'scripts/verify-m8-upstream-no-tcp.py'
       - 'scripts/test_verify_m8_upstream_no_tcp.py'
       - 'scripts/test_patch_m8_x11_no_tcp.py'

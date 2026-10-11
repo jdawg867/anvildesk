@@ -7,6 +7,7 @@ on:
       - feature/android-x11-display-input
     paths:
       - '.github/workflows/m8-upstream-x11-compile.yml'
+      - 'app/build.gradle.kts'
       - 'scripts/verify-m8-upstream-no-tcp.py'
       - 'scripts/test_verify_m8_upstream_no_tcp.py'
       - 'scripts/test_patch_m8_x11_no_tcp.py'
@@ -86,6 +87,103 @@ jobs:
             unzip -p "$aar" AndroidManifest.xml
           done > ../m8-upstream-aar-inventory.txt
           printf '%s\n' "${aars[@]}" > ../m8-upstream-aar-paths.txt
+      - name: Set up Android SDK for isolated APK packaging
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Provision Android SDK and rootless packaging prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
+          cd anvildesk-guard
+          bash scripts/fetch-rootless-runtime-source.sh
+          bash scripts/build-rootless-runtime.sh
+      - name: Stage patched ARM64 native library in disposable APK variant
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_lib="upstream/lorie/build/intermediates/merged_native_libs/debug/mergeDebugNativeLibs/out/lib/arm64-v8a/libXlorie.so"
+          test -s "$source_lib"
+          staged="anvildesk-guard/app/build/generated/m8-x11/jniLibs/arm64-v8a/libXlorie.so"
+          mkdir -p "$(dirname "$staged")"
+          install -m 0644 "$source_lib" "$staged"
+          sha256sum "$source_lib" "$staged" | tee m8-staged-native-sha256.txt
+      - name: Build independent M8 packaging-spike APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd anvildesk-guard
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:assembleDebug -PanvildeskM8PackagingSpike=true 2>&1 | tee ../m8-packaging-spike-build.log
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$apk"
+          unzip -l "$apk" | tee ../m8-packaging-spike-inventory.txt
+          unzip -l "$apk" | grep 'lib/arm64-v8a/libXlorie.so'
+          aapt="$ANDROID_HOME/build-tools/36.0.0/aapt"
+          "$aapt" dump badging "$apk" | tee ../m8-packaging-spike-manifest.txt
+          grep -E "^package: name='io.github.jdawg867.anvildesk.m8spike'" ../m8-packaging-spike-manifest.txt
+          test "$(unzip -Z1 "$apk" | grep -c '^lib/arm64-v8a/libXlorie.so
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          find upstream/lorie/build -type f -name '*.so' -print0 | sort -z | xargs -0 -r sha256sum | tee m8-native-sha256.txt
+      - name: Upload diagnostic evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-upstream-source-build-evidence
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            m8-upstream-build.log
+            m8-upstream-submodules.txt
+            m8-native-outputs.txt
+            m8-native-sha256.txt
+            m8-no-tcp-source.patch
+            m8-upstream-aar-build.log
+            m8-upstream-aar-inventory.txt
+            m8-upstream-aar-paths.txt
+)" -eq 1
+          ! unzip -Z1 "$apk" | grep -E '^lib/(armeabi-v7a|x86|x86_64)/libXlorie.so
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          find upstream/lorie/build -type f -name '*.so' -print0 | sort -z | xargs -0 -r sha256sum | tee m8-native-sha256.txt
+      - name: Upload diagnostic evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-upstream-source-build-evidence
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            m8-upstream-build.log
+            m8-upstream-submodules.txt
+            m8-native-outputs.txt
+            m8-native-sha256.txt
+            m8-no-tcp-source.patch
+            m8-upstream-aar-build.log
+            m8-upstream-aar-inventory.txt
+            m8-upstream-aar-paths.txt
+
+          sha256sum "$apk" > ../m8-packaging-spike-apk-sha256.txt
+      - name: Upload isolated packaging diagnostic APK (not functional desktop)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-isolated-native-packaging-spike-not-desktop-ready
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            anvildesk-guard/app/build/outputs/apk/debug/app-debug.apk
+            m8-packaging-spike-build.log
+            m8-packaging-spike-inventory.txt
+            m8-packaging-spike-manifest.txt
+            m8-packaging-spike-apk-sha256.txt
+            m8-staged-native-sha256.txt
       - name: Record source and native build output hashes
         if: success()
         shell: bash

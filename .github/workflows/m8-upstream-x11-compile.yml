@@ -9,6 +9,7 @@ on:
       - '.github/workflows/m8-upstream-x11-compile.yml'
       - 'scripts/verify-m8-upstream-no-tcp.py'
       - 'scripts/test_verify_m8_upstream_no_tcp.py'
+      - 'scripts/patch-m8-x11-no-tcp.py'
 
 permissions:
   contents: read
@@ -46,6 +47,15 @@ jobs:
             exit 1
           fi
           echo "EXPECTED_REJECTION=PASS (upstream unmodified TCP listener blocked)"
+      - name: Apply isolated no-TCP patch and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 anvildesk-guard/scripts/patch-m8-x11-no-tcp.py upstream/lorie/src/main/cpp/lorie/cmdentrypoint.cpp
+          python3 anvildesk-guard/scripts/verify-m8-upstream-no-tcp.py upstream/lorie/src/main/cpp/lorie/cmdentrypoint.cpp
+          git -C upstream diff --check
+          git -C upstream diff -- lorie/src/main/cpp/lorie/cmdentrypoint.cpp > m8-no-tcp-source.patch
+          test -s m8-no-tcp-source.patch
       - name: Install native host generators
         run: sudo apt-get update && sudo apt-get install -y bison flex ninja-build cmake python3 patch
       - name: Java 17
@@ -80,3 +90,4 @@ jobs:
             m8-upstream-submodules.txt
             m8-native-outputs.txt
             m8-native-sha256.txt
+            m8-no-tcp-source.patch

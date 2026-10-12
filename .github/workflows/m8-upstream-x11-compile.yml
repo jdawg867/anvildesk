@@ -8,6 +8,7 @@ on:
     paths:
       - '.github/workflows/m8-upstream-x11-compile.yml'
       - 'app/build.gradle.kts'
+      - 'scripts/audit-m8-native-jni.sh'
       - 'app/src/main/java/io/github/jdawg867/anvildesk/MainActivity.kt'
       - 'scripts/verify-m8-upstream-no-tcp.py'
       - 'scripts/test_verify_m8_upstream_no_tcp.py'
@@ -110,6 +111,12 @@ jobs:
           mkdir -p "$(dirname "$staged")"
           install -m 0644 "$source_lib" "$staged"
           sha256sum "$source_lib" "$staged" | tee m8-staged-native-sha256.txt
+      - name: Audit patched native JNI dependencies before packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          export M8_LIB="anvildesk-guard/app/build/generated/m8-x11/jniLibs/arm64-v8a/libXlorie.so"
+          bash anvildesk-guard/scripts/audit-m8-native-jni.sh
       - name: Set up Gradle for isolated packaging
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -147,6 +154,8 @@ jobs:
             m8-packaging-spike-manifest.txt
             m8-packaging-spike-apk-sha256.txt
             m8-staged-native-sha256.txt
+            m8-native-jni-exports.txt
+            m8-native-termux-references.txt
       - name: Record source and native build output hashes
         if: success()
         shell: bash

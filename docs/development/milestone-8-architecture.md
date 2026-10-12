@@ -231,3 +231,9 @@ The `-PanvildeskM8PackagingSpike=true` Gradle option is deliberately opt-in and 
 The dedicated GitHub Actions compile workflow stages the patched ARM64 library into that variant, builds a separate APK, checks the package ID and exact library entry, and uploads a diagnostic artifact on success. This is **native packaging evidence only**: the resulting APK has no integrated `LorieView`, no app-controlled X server start/stop interface, no authenticated socket handshake, and no XFCE rendering. The test APK explicitly announces this limitation on its startup screen. Do not install it as an upgrade to the production AnvilDesk app or cite it as M8 acceptance.
 
 The upstream source remains pinned at `termux/termux-x11@fa3a8b430e2896a19f44c99a9cb056254615ae06`. Native patch evidence and provenance logs remain associated with the same workflow. Review upstream source redistribution, notices, and the full dependency license inventory before a public release.
+
+## Production-ID M8 candidate gate (not released)
+
+The Android build now supports `-PanvildeskM8ProductionCandidate=true`. This deliberately retains the original application ID `io.github.jdawg867.anvildesk`, stages the patched ARM64 X11 payload only when explicitly selected, and fails configuration unless the complete existing stable development-signing environment is supplied. It cannot be combined with the separate `m8spike` variant.
+
+**No production-ID candidate has been installed, verified against a Samsung signer, or released.** A valid signature is necessary but not sufficient: native Termux-specific JNI registration, server lifecycle, socket handshakes, rendering, and input remain unimplemented. Never install a candidate solely because this Gradle gate succeeds. The previously added read-only `scripts/verify-m8-production-upgrade.sh` must be run against the actual candidate and installed APK, with certificate fingerprints matching, before considering any upgrade.

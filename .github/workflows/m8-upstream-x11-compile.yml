@@ -1,0 +1,180 @@
+name: M8 upstream X11 ARM64 compile spike
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/android-x11-display-input
+    paths:
+      - '.github/workflows/m8-upstream-x11-compile.yml'
+      - 'app/build.gradle.kts'
+      - 'scripts/audit-m8-native-jni.sh'
+      - 'app/src/main/java/io/github/jdawg867/anvildesk/MainActivity.kt'
+      - 'scripts/verify-m8-upstream-no-tcp.py'
+      - 'scripts/test_verify_m8_upstream_no_tcp.py'
+      - 'scripts/test_patch_m8_x11_no_tcp.py'
+      - 'scripts/patch-m8-x11-no-tcp.py'
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-upstream-native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout pinned upstream commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/termux/termux-x11.git upstream
+          cd upstream
+          git checkout --detach fa3a8b430e2896a19f44c99a9cb056254615ae06
+          test "$(git rev-parse HEAD)" = fa3a8b430e2896a19f44c99a9cb056254615ae06
+          git submodule update --init --recursive --jobs 8
+          git submodule status --recursive | tee ../m8-upstream-submodules.txt
+          if grep -Eq '^[+-U]' ../m8-upstream-submodules.txt; then
+            echo "STOP: uninitialized or mismatched submodules"
+            exit 1
+          fi
+      - name: Checkout AnvilDesk guard
+        uses: actions/checkout@v4
+        with:
+          path: anvildesk-guard
+      - name: Verify source policy guard rejects unmodified upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s anvildesk-guard/scripts -p 'test_*m8*.py' -v
+          if python3 anvildesk-guard/scripts/verify-m8-upstream-no-tcp.py upstream/lorie/src/main/cpp/lorie/cmdentrypoint.cpp; then
+            echo "STOP: expected pinned upstream to fail no-TCP policy; audit assumptions changed"
+            exit 1
+          fi
+          echo "EXPECTED_REJECTION=PASS (upstream unmodified TCP listener blocked)"
+      - name: Apply isolated no-TCP patch and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 anvildesk-guard/scripts/patch-m8-x11-no-tcp.py upstream/lorie/src/main/cpp/lorie/cmdentrypoint.cpp
+          python3 anvildesk-guard/scripts/verify-m8-upstream-no-tcp.py upstream/lorie/src/main/cpp/lorie/cmdentrypoint.cpp
+          git -C upstream diff --check
+          git -C upstream diff -- lorie/src/main/cpp/lorie/cmdentrypoint.cpp > m8-no-tcp-source.patch
+          test -s m8-no-tcp-source.patch
+      - name: Install native host generators
+        run: sudo apt-get update && sudo apt-get install -y bison flex ninja-build cmake python3 patch
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build pinned upstream standalone ARM64 native library
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd upstream
+          chmod +x gradlew
+          ./gradlew :lorie-app:assembleStandaloneDebug --no-daemon --stacktrace 2>&1 | tee ../m8-upstream-build.log
+          find lorie/build -type f \( -name '*.so' -o -name '*.a' \) -print | tee ../m8-native-outputs.txt
+          grep -E '\.so$' ../m8-native-outputs.txt
+      - name: Package and inspect patched upstream library AAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd upstream
+          ./gradlew :lorie:assembleDebug --no-daemon --stacktrace 2>&1 | tee ../m8-upstream-aar-build.log
+          mapfile -t aars < <(find lorie/build/outputs/aar -type f -name '*.aar' | sort)
+          test "${#aars[@]}" -gt 0
+          for aar in "${aars[@]}"; do
+            unzip -l "$aar"
+            unzip -p "$aar" AndroidManifest.xml
+          done > ../m8-upstream-aar-inventory.txt
+          printf '%s\n' "${aars[@]}" > ../m8-upstream-aar-paths.txt
+      - name: Set up Android SDK for isolated APK packaging
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Provision SDK and rootless packaging prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
+          cd anvildesk-guard
+          bash scripts/fetch-rootless-runtime-source.sh
+          bash scripts/build-rootless-runtime.sh
+      - name: Stage patched ARM64 X11 library into isolated variant
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_lib="upstream/lorie/build/intermediates/merged_native_libs/debug/mergeDebugNativeLibs/out/lib/arm64-v8a/libXlorie.so"
+          test -s "$source_lib"
+          staged="anvildesk-guard/app/build/generated/m8-x11/jniLibs/arm64-v8a/libXlorie.so"
+          mkdir -p "$(dirname "$staged")"
+          install -m 0644 "$source_lib" "$staged"
+          sha256sum "$source_lib" "$staged" | tee m8-staged-native-sha256.txt
+      - name: Audit patched native JNI dependencies before packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          export M8_LIB="anvildesk-guard/app/build/generated/m8-x11/jniLibs/arm64-v8a/libXlorie.so"
+          bash anvildesk-guard/scripts/audit-m8-native-jni.sh
+      - name: Set up Gradle for isolated packaging
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+      - name: Build and inspect isolated M8 packaging APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd anvildesk-guard
+          gradle --no-daemon :app:assembleDebug -PanvildeskM8PackagingSpike=true 2>&1 | tee ../m8-packaging-spike-build.log
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$apk"
+          unzip -l "$apk" | tee ../m8-packaging-spike-inventory.txt
+          unzip -Z1 "$apk" | grep -Fx 'lib/arm64-v8a/libXlorie.so'
+          aapt="$ANDROID_HOME/build-tools/36.0.0/aapt"
+          "$aapt" dump badging "$apk" | tee ../m8-packaging-spike-manifest.txt
+          grep -F "package: name='io.github.jdawg867.anvildesk.m8spike'" ../m8-packaging-spike-manifest.txt
+          test "$(unzip -Z1 "$apk" | grep -Fxc 'lib/arm64-v8a/libXlorie.so')" -eq 1
+          if unzip -Z1 "$apk" | grep -E '^lib/(armeabi-v7a|x86|x86_64)/libXlorie[.]so$'; then
+            echo "STOP: unwanted X11 ABI in isolated APK"
+            exit 1
+          fi
+          sha256sum "$apk" > ../m8-packaging-spike-apk-sha256.txt
+      - name: Upload isolated packaging diagnostic APK (not functional desktop)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-isolated-native-packaging-spike-not-desktop-ready
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            anvildesk-guard/app/build/outputs/apk/debug/app-debug.apk
+            m8-packaging-spike-build.log
+            m8-packaging-spike-inventory.txt
+            m8-packaging-spike-manifest.txt
+            m8-packaging-spike-apk-sha256.txt
+            m8-staged-native-sha256.txt
+            m8-native-jni-exports.txt
+            m8-native-termux-references.txt
+      - name: Record source and native build output hashes
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          find upstream/lorie/build -type f -name '*.so' -print0 | sort -z | xargs -0 -r sha256sum | tee m8-native-sha256.txt
+      - name: Upload diagnostic evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-upstream-source-build-evidence
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            m8-upstream-build.log
+            m8-upstream-submodules.txt
+            m8-native-outputs.txt
+            m8-native-sha256.txt
+            m8-no-tcp-source.patch
+            m8-upstream-aar-build.log
+            m8-upstream-aar-inventory.txt
+            m8-upstream-aar-paths.txt

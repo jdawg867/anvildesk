@@ -80,6 +80,9 @@ jobs:
           echo "available=true" >> "$GITHUB_OUTPUT"
           echo "keystore_path=$keystore" >> "$GITHUB_OUTPUT"
 
+      - name: Validate read-only production upgrade gate syntax
+        run: bash -n scripts/verify-m8-production-upgrade.sh
+
       - name: Unit tests
         run: gradle --no-daemon :core:runtime:testDebugUnitTest
 

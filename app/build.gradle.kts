@@ -20,6 +20,12 @@ val developmentSigningValues = listOf(
 val developmentSigningRequested = developmentSigningValues.any { !it.isNullOrBlank() }
 val developmentSigningComplete = developmentSigningValues.all { !it.isNullOrBlank() }
 
+// This is only a transport-library packaging spike. Keep production package builds blocked
+// until reviewed AnvilDesk JNI, Surface lifecycle and authenticated X11 tests exist.
+if (m8ProductionCandidate) {
+    error("M8 production candidate BLOCKED: functional JNI/Surface/X11 integration is not yet validated")
+}
+
 if (m8ProductionCandidate && !developmentSigningComplete) {
     error("M8 production candidate requires complete stable development signing")
 }

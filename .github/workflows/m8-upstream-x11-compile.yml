@@ -9,6 +9,7 @@ on:
       - '.github/workflows/m8-upstream-x11-compile.yml'
       - 'app/build.gradle.kts'
       - 'scripts/audit-m8-native-jni.sh'
+      - 'scripts/audit-m8-jni-registration.py'
       - 'app/src/main/java/io/github/jdawg867/anvildesk/MainActivity.kt'
       - 'scripts/verify-m8-upstream-no-tcp.py'
       - 'scripts/test_verify_m8_upstream_no_tcp.py'
@@ -60,6 +61,13 @@ jobs:
           git -C upstream diff --check
           git -C upstream diff -- lorie/src/main/cpp/lorie/cmdentrypoint.cpp > m8-no-tcp-source.patch
           test -s m8-no-tcp-source.patch
+      - name: Verify pinned JNI class registration contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 anvildesk-guard/scripts/audit-m8-jni-registration.py \
+            upstream/lorie/src/main/cpp/lorie/cmdentrypoint.cpp \
+            upstream/lorie/src/main/cpp/lorie/activity.cpp
       - name: Install native host generators
         run: sudo apt-get update && sudo apt-get install -y bison flex ninja-build cmake python3 patch
       - name: Java 17

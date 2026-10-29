@@ -11,6 +11,8 @@ on:
       - 'scripts/audit-m8-native-jni.sh'
       - 'scripts/audit-m8-jni-registration.py'
       - 'scripts/test_m8_jni_registration.py'
+      - 'scripts/patch-m8-jni-registration.py'
+      - 'scripts/test_m8_jni_patch.py'
       - 'app/src/main/java/io/github/jdawg867/anvildesk/MainActivity.kt'
       - 'scripts/verify-m8-upstream-no-tcp.py'
       - 'scripts/test_verify_m8_upstream_no_tcp.py'
@@ -49,6 +51,7 @@ jobs:
           set -euo pipefail
           python3 -m unittest discover -s anvildesk-guard/scripts -p 'test_*m8*.py' -v
           python3 -m unittest discover -s anvildesk-guard/scripts -p 'test_m8_jni_registration.py' -v
+          python3 -m unittest discover -s anvildesk-guard/scripts -p 'test_m8_jni_patch.py' -v
           if python3 anvildesk-guard/scripts/verify-m8-upstream-no-tcp.py upstream/lorie/src/main/cpp/lorie/cmdentrypoint.cpp; then
             echo "STOP: expected pinned upstream to fail no-TCP policy; audit assumptions changed"
             exit 1

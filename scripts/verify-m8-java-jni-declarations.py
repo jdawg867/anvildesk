@@ -24,7 +24,7 @@ CLASSES = {
 def declarations(source):
     found = {}
     for match in re.finditer(
-        r'public\s+(static\s+)?native\s+(\w+(?:\[\])?)\s+(\w+)\s*\(([^)]*)\)\s*;',
+        r'(?:public|private|protected)\s+(static\s+)?native\s+(\w+(?:\[\])?)\s+(\w+)\s*\(([^)]*)\)\s*;',
         source,
     ):
         is_static, ret, name, args = match.groups()

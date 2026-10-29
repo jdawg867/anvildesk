@@ -73,6 +73,19 @@ jobs:
           python3 anvildesk-guard/scripts/audit-m8-jni-registration.py \
             upstream/lorie/src/main/cpp/lorie/cmdentrypoint.cpp \
             upstream/lorie/src/main/cpp/lorie/activity.cpp
+      - name: Apply isolated AnvilDesk JNI class-registration patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 anvildesk-guard/scripts/patch-m8-jni-registration.py \
+            upstream/lorie/src/main/cpp/lorie/cmdentrypoint.cpp \
+            upstream/lorie/src/main/cpp/lorie/activity.cpp
+          grep -F 'FindClass("io/github/jdawg867/anvildesk/m8/M8CmdEntryPoint")' upstream/lorie/src/main/cpp/lorie/cmdentrypoint.cpp
+          grep -F 'FindClass("io/github/jdawg867/anvildesk/m8/M8LorieView")' upstream/lorie/src/main/cpp/lorie/activity.cpp
+          grep -F 'FindClass("io/github/jdawg867/anvildesk/m8/M8NativeActivityBridge")' upstream/lorie/src/main/cpp/lorie/activity.cpp
+          git -C upstream diff --check
+          git -C upstream diff -- lorie/src/main/cpp/lorie/cmdentrypoint.cpp lorie/src/main/cpp/lorie/activity.cpp > m8-jni-registry-source.patch
+          test -s m8-jni-registry-source.patch
       - name: Install native host generators
         run: sudo apt-get update && sudo apt-get install -y bison flex ninja-build cmake python3 patch
       - name: Java 17
@@ -188,6 +201,7 @@ jobs:
             m8-native-outputs.txt
             m8-native-sha256.txt
             m8-no-tcp-source.patch
+            m8-jni-registry-source.patch
             m8-upstream-aar-build.log
             m8-upstream-aar-inventory.txt
             m8-upstream-aar-paths.txt

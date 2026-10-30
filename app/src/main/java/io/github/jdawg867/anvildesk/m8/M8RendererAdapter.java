@@ -19,6 +19,7 @@ public final class M8RendererAdapter {
     private final M8SurfaceLifecycle lifecycle = new M8SurfaceLifecycle();
     private long resource;
     private long token;
+    private boolean poisoned;
 
     public M8RendererAdapter(NativeBridge bridge) {
         if (bridge == null) throw new IllegalArgumentException("bridge required");
@@ -26,7 +27,7 @@ public final class M8RendererAdapter {
     }
 
     public synchronized long attach(Surface surface) {
-        if (resource != 0 || token != 0) return -1;
+        if (poisoned || resource != 0 || token != 0) return -1;
         long next = lifecycle.attach(surface);
         if (next <= 0) return -1;
         long created = 0;
@@ -45,6 +46,8 @@ public final class M8RendererAdapter {
                 try {
                     bridge.destroy(created);
                 } catch (RuntimeException | Error cleanup) {
+                    // Native resource ownership is uncertain; deny reuse forever.
+                    poisoned = true;
                     failure.addSuppressed(cleanup);
                 }
             }
@@ -63,7 +66,12 @@ public final class M8RendererAdapter {
         if (!lifecycle.beginDetach(generation)) return false;
         // If native destroy fails, leave STOPPING and retain the resource token:
         // never permit a new attachment while cleanup is uncertain.
-        bridge.destroy(resource);
+        try {
+            bridge.destroy(resource);
+        } catch (RuntimeException | Error failure) {
+            poisoned = true;
+            throw failure;
+        }
         resource = 0;
         token = 0;
         return lifecycle.finishDetach(generation);

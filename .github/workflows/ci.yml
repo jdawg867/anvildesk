@@ -84,7 +84,7 @@ jobs:
         run: bash -n scripts/verify-m8-production-upgrade.sh
 
       - name: Unit tests
-        run: gradle --no-daemon :core:runtime:testDebugUnitTest
+        run: gradle --no-daemon :core:runtime:testDebugUnitTest :app:testDebugUnitTest
 
       - name: Build stable development debug APK
         if: github.event_name == 'push' && steps.dev_signing.outputs.available == 'true'

@@ -96,4 +96,6 @@ android {
 
 dependencies {
     implementation(project(":core:runtime"))
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.mockito:mockito-core:5.18.0")
 }

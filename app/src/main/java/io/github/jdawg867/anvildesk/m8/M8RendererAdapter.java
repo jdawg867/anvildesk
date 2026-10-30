@@ -61,6 +61,12 @@ public final class M8RendererAdapter {
         return resource > 0 && token == generation && lifecycle.isCurrent(generation, surface);
     }
 
+    /** Verify the exact native renderer handle under the current Surface generation. */
+    public synchronized boolean ownsResource(long generation, Surface candidate, long handle) {
+        return !poisoned && handle > 0 && resource == handle
+                && token == generation && lifecycle.isCurrent(generation, candidate);
+    }
+
     public synchronized boolean detach(long generation) {
         if (generation <= 0 || generation != token || resource <= 0) return false;
         if (!lifecycle.beginDetach(generation)) return false;

@@ -25,6 +25,10 @@ public final class M8NativeViewportSink implements M8ViewportDispatcher.Sink {
         this.calls = calls;
     }
 
+    public long resourceHandle() {
+        return resource;
+    }
+
     /** A reviewed owner may explicitly authorize only an already-live renderer. */
     public synchronized void setEnabled(boolean enabled) {
         this.enabled = enabled;

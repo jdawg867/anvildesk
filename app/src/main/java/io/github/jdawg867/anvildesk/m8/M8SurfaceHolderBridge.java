@@ -13,17 +13,24 @@ import android.view.SurfaceHolder;
 public final class M8SurfaceHolderBridge implements SurfaceHolder.Callback {
     private final SurfaceHolder holder;
     private final M8RendererAdapter renderer;
+    private final M8RendererViewportSession viewportSession;
     private long generation;
     private Surface attachedSurface;
     private boolean closed;
     private final M8ViewportState viewport = new M8ViewportState();
 
     public M8SurfaceHolderBridge(SurfaceHolder holder, M8RendererAdapter renderer) {
+        this(holder, renderer, null);
+    }
+
+    public M8SurfaceHolderBridge(SurfaceHolder holder, M8RendererAdapter renderer,
+                                 M8RendererViewportSession viewportSession) {
         if (holder == null || renderer == null) {
             throw new IllegalArgumentException("holder and renderer required");
         }
         this.holder = holder;
         this.renderer = renderer;
+        this.viewportSession = viewportSession;
     }
 
     @Override public synchronized void surfaceCreated(SurfaceHolder callbackHolder) {
@@ -33,6 +40,12 @@ public final class M8SurfaceHolderBridge implements SurfaceHolder.Callback {
         if (next > 0) {
             generation = next;
             attachedSurface = candidate;
+            if (viewportSession != null && !viewportSession.bind(next, candidate)) {
+                viewportSession.revoke();
+                renderer.detach(next);
+                generation = 0;
+                attachedSurface = null;
+            }
         }
     }
 
@@ -44,11 +57,13 @@ public final class M8SurfaceHolderBridge implements SurfaceHolder.Callback {
         // Rotation/resize updates metadata only; JNI viewport changes stay gated.
         if (!renderer.isCurrent(generation, attachedSurface)) return;
         viewport.update(generation, width, height);
+        if (viewportSession != null) viewportSession.resize(width, height);
     }
 
     @Override public synchronized void surfaceDestroyed(SurfaceHolder callbackHolder) {
         if (callbackHolder != holder || generation == 0) return;
         long previous = generation;
+        if (viewportSession != null) viewportSession.revoke();
         // Preserve state when native cleanup throws. No subsequent attach allowed.
         if (renderer.detach(previous)) {
             viewport.clear(previous);
@@ -60,6 +75,7 @@ public final class M8SurfaceHolderBridge implements SurfaceHolder.Callback {
     public synchronized void close() {
         if (closed) return;
         closed = true;
+        if (viewportSession != null) viewportSession.revoke();
         if (generation != 0 && renderer.detach(generation)) {
             viewport.clear(generation);
             generation = 0;

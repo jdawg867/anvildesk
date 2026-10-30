@@ -11,7 +11,7 @@ import android.view.SurfaceView;
  * does not load native code, initiate X11, or access the Ubuntu root filesystem.
  */
 public final class M8DisplaySurfaceView extends SurfaceView implements AutoCloseable {
-    private final M8SurfaceHolderBridge callbacks;
+    private final M8SurfaceCallbackRegistration callbacks;
     private boolean closed;
 
     public M8DisplaySurfaceView(Context context, M8RendererAdapter renderer) {
@@ -20,8 +20,7 @@ public final class M8DisplaySurfaceView extends SurfaceView implements AutoClose
             throw new IllegalArgumentException("renderer required");
         }
         SurfaceHolder holder = getHolder();
-        callbacks = new M8SurfaceHolderBridge(holder, renderer);
-        holder.addCallback(callbacks);
+        callbacks = new M8SurfaceCallbackRegistration(holder, renderer);
     }
 
     public synchronized boolean isRendererAttached() {
@@ -33,7 +32,6 @@ public final class M8DisplaySurfaceView extends SurfaceView implements AutoClose
         // Make the view terminal before detachment; an exception must not
         // permit new attachments or stale callback registration.
         closed = true;
-        getHolder().removeCallback(callbacks);
         callbacks.close();
     }
 

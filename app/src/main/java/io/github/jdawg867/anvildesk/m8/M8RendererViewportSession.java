@@ -28,7 +28,7 @@ public final class M8RendererViewportSession {
     }
 
     public synchronized boolean bind(long token, Surface candidate) {
-        if (generation != 0 || token <= 0 || !renderer.isCurrent(token, candidate)) {
+        if (generation != 0 || token <= 0 || !renderer.ownsResource(token, candidate, sink.resourceHandle())) {
             return false;
         }
         generation = token;
@@ -38,7 +38,7 @@ public final class M8RendererViewportSession {
     }
 
     public synchronized boolean resize(int width, int height) {
-        if (generation == 0 || !renderer.isCurrent(generation, surface)) {
+        if (generation == 0 || !renderer.ownsResource(generation, surface, sink.resourceHandle())) {
             sink.setEnabled(false);
             return false;
         }

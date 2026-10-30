@@ -3,7 +3,7 @@ package io.github.jdawg867.anvildesk.m8;
 import android.view.Surface;
 
 /**
- * Thread-confined, fail-closed Android Surface ownership state machine.
+ * Synchronized, fail-closed Android Surface ownership state machine.
  *
  * No native methods are called here. A future renderer adapter must hold the
  * generation token, validate it before use, and explicitly release its native

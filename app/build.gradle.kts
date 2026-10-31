@@ -3,6 +3,7 @@ plugins {
 }
 
 val m8PackagingSpike = providers.gradleProperty("anvildeskM8PackagingSpike").orNull == "true"
+val m8EmulatorTests = providers.gradleProperty("anvildeskM8EmulatorTests").orNull == "true"
 val m8ProductionCandidate = providers.gradleProperty("anvildeskM8ProductionCandidate").orNull == "true"
 require(!(m8PackagingSpike && m8ProductionCandidate)) { "M8 variants are mutually exclusive" }
 
@@ -51,7 +52,7 @@ android {
         versionName = "0.1.0-dev"
 
         ndk {
-            abiFilters += listOf("arm64-v8a")
+            abiFilters += listOf(if (m8EmulatorTests) "x86_64" else "arm64-v8a")
         }
     }
 

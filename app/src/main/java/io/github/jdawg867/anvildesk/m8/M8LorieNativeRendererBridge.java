@@ -43,7 +43,14 @@ public final class M8LorieNativeRendererBridge
 
     @Override public synchronized long create() {
         if (!authorized || terminal || activeResource != 0) return 0;
-        long created = calls.nativeInit();
+        long created;
+        try {
+            created = calls.nativeInit();
+        } catch (RuntimeException | Error failure) {
+            terminal = true;
+            authorized = false;
+            throw failure;
+        }
         if (created <= 0) {
             terminal = true;
             return 0;

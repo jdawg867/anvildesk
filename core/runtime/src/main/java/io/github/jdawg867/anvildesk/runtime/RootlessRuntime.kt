@@ -218,6 +218,34 @@ object RootlessRuntimePlanner {
         require(!Files.isSymbolicLink(file.toPath())) { "$label file must not be a symlink" }
     }
 
+    /**
+     * M8 diagnostic-only X11 probe. Not a desktop launcher.
+     * Caller must separately verify native server liveness and authorization.
+     */
+    fun m8AuthenticatedDisplayProbe(
+        rootfs: File,
+        nativeLibraryDirectory: File,
+        hostTempDirectory: File,
+        bridge: M8GuestDisplayBridge.Plan,
+    ): RootlessRuntimeInvocation {
+        val runtime = requireRuntime(rootfs, nativeLibraryDirectory, hostTempDirectory, "M8 mutable Ubuntu rootfs")
+        require(File(rootfs, "usr/bin/xdpyinfo").isFile) { "xdpyinfo is not installed in Ubuntu guest" }
+        require(bridge.binds.size == 4)
+        require(bridge.binds[0].endsWith(":/root!"))
+        require(bridge.binds[1].endsWith(":/tmp!"))
+        require(bridge.binds[2].endsWith(":/tmp/.X11-unix!"))
+        require(bridge.binds[3].endsWith(":/root/.Xauthority!"))
+        require(bridge.guestDisplayProbe == listOf("/usr/bin/xdpyinfo", "-display", ":0"))
+        require(bridge.guestEnvironment["DISPLAY"] == ":0")
+        require(bridge.guestEnvironment["XAUTHORITY"] == "/root/.Xauthority")
+        val environment = LinkedHashMap(guestEnvironment(runtime.loader, hostTempDirectory))
+        environment.putAll(bridge.guestEnvironment)
+        return RootlessRuntimeInvocation(
+            command = baseCommand(runtime, rootfs, "/root") + bridge.binds + bridge.guestDisplayProbe,
+            environment = environment,
+        )
+    }
+
     private fun baseCommand(
         runtime: RuntimeFiles,
         rootfs: File,

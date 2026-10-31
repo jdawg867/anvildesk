@@ -80,8 +80,17 @@ jobs:
           echo "available=true" >> "$GITHUB_OUTPUT"
           echo "keystore_path=$keystore" >> "$GITHUB_OUTPUT"
 
+      - name: Validate read-only production upgrade gate syntax
+        run: bash -n scripts/verify-m8-production-upgrade.sh
+
+      - name: Verify M8 isolated process remains disabled
+        run: |
+          python3 scripts/verify-m8-secondary-process.py \
+            app/src/main/AndroidManifest.xml \
+            app/src/main/java/io/github/jdawg867/anvildesk/m8/M8X11ProcessService.java
+
       - name: Unit tests
-        run: gradle --no-daemon :core:runtime:testDebugUnitTest
+        run: gradle --no-daemon :core:runtime:testDebugUnitTest :app:testDebugUnitTest
 
       - name: Build stable development debug APK
         if: github.event_name == 'push' && steps.dev_signing.outputs.available == 'true'

@@ -2,6 +2,11 @@ plugins {
     id("com.android.application")
 }
 
+val m8PackagingSpike = providers.gradleProperty("anvildeskM8PackagingSpike").orNull == "true"
+val m8ProductionCandidate = providers.gradleProperty("anvildeskM8ProductionCandidate").orNull == "true"
+require(!(m8PackagingSpike && m8ProductionCandidate)) { "M8 variants are mutually exclusive" }
+
+
 val developmentKeystorePath = providers.environmentVariable("ANVILDESK_DEV_KEYSTORE").orNull
 val developmentStorePassword = providers.environmentVariable("ANVILDESK_DEV_STORE_PASSWORD").orNull
 val developmentKeyAlias = providers.environmentVariable("ANVILDESK_DEV_KEY_ALIAS").orNull
@@ -14,6 +19,16 @@ val developmentSigningValues = listOf(
 )
 val developmentSigningRequested = developmentSigningValues.any { !it.isNullOrBlank() }
 val developmentSigningComplete = developmentSigningValues.all { !it.isNullOrBlank() }
+
+// This is only a transport-library packaging spike. Keep production package builds blocked
+// until reviewed AnvilDesk JNI, Surface lifecycle and authenticated X11 tests exist.
+if (m8ProductionCandidate) {
+    error("M8 production candidate BLOCKED: functional JNI/Surface/X11 integration is not yet validated")
+}
+
+if (m8ProductionCandidate && !developmentSigningComplete) {
+    error("M8 production candidate requires complete stable development signing")
+}
 
 if (developmentSigningRequested && !developmentSigningComplete) {
     error(
@@ -52,6 +67,10 @@ android {
 
     buildTypes {
         getByName("debug") {
+            if (m8PackagingSpike) {
+                applicationIdSuffix = ".m8spike"
+                versionNameSuffix = "-m8-spike"
+            }
             if (developmentSigningComplete) {
                 signingConfig = signingConfigs.getByName("ciDevelopment")
             }
@@ -59,6 +78,9 @@ android {
     }
 
     sourceSets.getByName("main").jniLibs.srcDir("build/generated/rootless-runtime/jniLibs")
+    if (m8PackagingSpike || m8ProductionCandidate) {
+        sourceSets.getByName("main").jniLibs.srcDir("build/generated/m8-x11/jniLibs")
+    }
 
     packaging {
         jniLibs {
@@ -74,4 +96,6 @@ android {
 
 dependencies {
     implementation(project(":core:runtime"))
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.mockito:mockito-core:5.18.0")
 }

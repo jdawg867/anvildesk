@@ -23,6 +23,8 @@ on:
       - 'scripts/test_patch_m8_x11_no_tcp.py'
       - 'scripts/patch-m8-x11-no-tcp.py'
       - 'scripts/audit-m8-native-server-lifecycle.py'
+      - 'scripts/verify-m8-server-process-boundary.py'
+      - 'scripts/test_m8_server_process_boundary.py'
 
 permissions:
   contents: read
@@ -80,6 +82,15 @@ jobs:
             upstream/lorie/src/main/cpp/lorie/cmdentrypoint.cpp \
             | tee m8-native-server-lifecycle-audit.txt
           grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-native-server-lifecycle-audit.txt
+      - name: Reject unsupported in-process X11 shutdown assumptions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s anvildesk-guard/scripts -p 'test_m8_server_process_boundary.py' -v
+          python3 anvildesk-guard/scripts/verify-m8-server-process-boundary.py \
+            upstream/lorie/src/main/cpp/lorie/cmdentrypoint.cpp \
+            | tee m8-server-process-boundary-audit.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-server-process-boundary-audit.txt
       - name: Verify pinned JNI class registration contract
         shell: bash
         run: |
@@ -237,6 +248,7 @@ jobs:
             m8-jni-method-contract.txt
             m8-java-jni-signature-check.txt
             m8-native-server-lifecycle-audit.txt
+            m8-server-process-boundary-audit.txt
             m8-upstream-aar-build.log
             m8-upstream-aar-inventory.txt
             m8-upstream-aar-paths.txt

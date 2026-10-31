@@ -33,6 +33,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
+      - name: Install pinned ARM64 runtime build dependencies
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
       - name: Build pinned rootless runtime for isolated test APK
         shell: bash
         run: |

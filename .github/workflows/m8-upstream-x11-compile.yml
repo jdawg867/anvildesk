@@ -22,6 +22,7 @@ on:
       - 'scripts/test_verify_m8_upstream_no_tcp.py'
       - 'scripts/test_patch_m8_x11_no_tcp.py'
       - 'scripts/patch-m8-x11-no-tcp.py'
+      - 'scripts/audit-m8-native-server-lifecycle.py'
 
 permissions:
   contents: read
@@ -71,6 +72,14 @@ jobs:
           git -C upstream diff --check
           git -C upstream diff -- lorie/src/main/cpp/lorie/cmdentrypoint.cpp > m8-no-tcp-source.patch
           test -s m8-no-tcp-source.patch
+      - name: Record unresolved native server lifecycle blockers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 anvildesk-guard/scripts/audit-m8-native-server-lifecycle.py \
+            upstream/lorie/src/main/cpp/lorie/cmdentrypoint.cpp \
+            | tee m8-native-server-lifecycle-audit.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-native-server-lifecycle-audit.txt
       - name: Verify pinned JNI class registration contract
         shell: bash
         run: |
@@ -227,6 +236,7 @@ jobs:
             m8-jni-registry-source.patch
             m8-jni-method-contract.txt
             m8-java-jni-signature-check.txt
+            m8-native-server-lifecycle-audit.txt
             m8-upstream-aar-build.log
             m8-upstream-aar-inventory.txt
             m8-upstream-aar-paths.txt

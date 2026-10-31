@@ -92,6 +92,9 @@ jobs:
       - name: Unit tests
         run: gradle --no-daemon :core:runtime:testDebugUnitTest :app:testDebugUnitTest
 
+      - name: Compile M8 Android instrumentation tests (no emulator execution)
+        run: gradle --no-daemon :app:assembleDebugAndroidTest
+
       - name: Build stable development debug APK
         if: github.event_name == 'push' && steps.dev_signing.outputs.available == 'true'
         env:

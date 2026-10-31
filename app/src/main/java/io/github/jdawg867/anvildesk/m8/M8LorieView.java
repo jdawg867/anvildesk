@@ -12,7 +12,8 @@ import android.view.Surface;
  * Methods here mirror the pinned upstream JNINativeMethod table.
  */
 public final class M8LorieView {
-    private M8LorieView() {}
+    /* Package-private: only the reviewed M8 JNI boundary may instantiate it. */
+    M8LorieView() {}
 
     public native long nativeInit();
     public native void nativeDestroy(long ptr);

@@ -23,7 +23,7 @@ def verify(manifest: str, source: str) -> None:
     for forbidden in ("System.loadLibrary(", "Runtime.getRuntime(", "ProcessBuilder(", "startForeground("):
         if forbidden in source:
             raise ValueError("unreviewed process/native call " + forbidden)
-    for expected_code in ("extends Service", "return null;", "stopSelf(startId);", "START_NOT_STICKY"):
+    for expected_code in ("extends Service", "data.enforceInterface(DESCRIPTOR);", "data.enforceNoDataAvail();", "Binder.getCallingUid()", "return binder;", "stopSelf(startId);", "START_NOT_STICKY"):
         if expected_code not in source:
             raise ValueError("service behavior drift: " + expected_code)
 

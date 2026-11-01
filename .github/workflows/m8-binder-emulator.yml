@@ -46,6 +46,45 @@ jobs:
           python3 scripts/verify-m8-secondary-process.py \
             app/src/main/AndroidManifest.xml \
             app/src/main/java/io/github/jdawg867/anvildesk/m8/M8X11ProcessService.java
+      - name: Verify x86 emulator cannot accidentally package ARM64 X11 library
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon :app:assembleDebug -PanvildeskM8EmulatorTests=true
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          test -s "$apk"
+          if unzip -Z1 "$apk" | grep -E '^lib/[^/]+/libXlorie[.]so
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Execute Binder instrumentation on isolated emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_5
+          disable-animations: true
+          emulator-boot-timeout: 900
+          script: |
+            gradle --no-daemon :app:connectedDebugAndroidTest -PanvildeskM8EmulatorTests=true
+      - name: Upload Android instrumentation test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-binder-emulator-reports
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            app/build/reports/androidTests/**
+            app/build/outputs/androidTest-results/**
+; then
+            echo "STOP: emulator test unexpectedly packaged native X11" >&2
+            exit 1
+          fi
+          echo "PASS: emulator APK has no native X11 library"
+
       - name: Enable KVM access on hosted runner
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules

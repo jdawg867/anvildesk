@@ -209,6 +209,16 @@ jobs:
             exit 1
           fi
           sha256sum "$apk" > ../m8-packaging-spike-apk-sha256.txt
+      - name: Compile ARM64 isolated packaging instrumentation APK (do not execute)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd anvildesk-guard
+          gradle --no-daemon :app:assembleDebugAndroidTest -PanvildeskM8PackagingSpike=true
+          test_apk="app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+          test -s "$test_apk"
+          sha256sum "$test_apk" | tee ../m8-arm64-instrumentation-apk-sha256.txt
+          echo "PASS: ARM64 instrumentation APK compiled; native loading NOT attempted"
       - name: Upload isolated packaging diagnostic APK (not functional desktop)
         if: success()
         uses: actions/upload-artifact@v4
@@ -223,6 +233,8 @@ jobs:
             m8-packaging-spike-manifest.txt
             m8-packaging-spike-apk-sha256.txt
             m8-staged-native-sha256.txt
+            anvildesk-guard/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            m8-arm64-instrumentation-apk-sha256.txt
             m8-native-jni-exports.txt
             m8-native-termux-references.txt
       - name: Record source and native build output hashes

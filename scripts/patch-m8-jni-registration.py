@@ -62,6 +62,25 @@ def patch(cmd: str, activity: str) -> tuple[str, str]:
     if activity.count(old_activity) != 1:
         raise ValueError("Pinned activity JNI registration structure changed")
     activity = activity.replace(old_activity, new_activity)
+    # Resolve all application-owned JNI classes *before* registering the first
+    # native method. This avoids leaving partially registered classes when a
+    # later class lookup fails. A failure during registration still needs
+    # rollback and is deliberately reported as a remaining blocker.
+    preflight_anchor = '    vm->AttachCurrentThread(&env, nullptr);'
+    if activity.count(preflight_anchor) != 1:
+        raise ValueError("Pinned JNI_OnLoad thread attachment changed")
+    preflight = '''    if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env)
+        return JNI_ERR;
+    jclass preflightView = env->FindClass("io/github/jdawg867/anvildesk/m8/M8LorieView");
+    if (!preflightView) return JNI_ERR;
+    jclass preflightActivity = env->FindClass("io/github/jdawg867/anvildesk/m8/M8NativeActivityBridge");
+    if (!preflightActivity) return JNI_ERR;
+    jclass preflightCmd = env->FindClass("io/github/jdawg867/anvildesk/m8/M8CmdEntryPoint");
+    if (!preflightCmd) return JNI_ERR;
+    env->DeleteLocalRef(preflightView);
+    env->DeleteLocalRef(preflightActivity);
+    env->DeleteLocalRef(preflightCmd);'''
+    activity = activity.replace(preflight_anchor, preflight)
     return cmd, activity
 
 def main() -> int:

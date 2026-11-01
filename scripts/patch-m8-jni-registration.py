@@ -25,6 +25,43 @@ def patch(cmd: str, activity: str) -> tuple[str, str]:
                       'FindClass("' + REPLACEMENTS["com/termux/x11/CmdEntryPoint"] + '")')
     for old in ("com/termux/x11/LorieView", "com/termux/x11/MainActivity"):
         activity = activity.replace(f'FindClass("{old}")', f'FindClass("{REPLACEMENTS[old]}")')
+    # Check lookups and registrations without changing the exported helper
+    # signature declared in upstream lorie.h.
+    old_cmd = '''    jclass cls = env->FindClass("io/github/jdawg867/anvildesk/m8/M8CmdEntryPoint");
+    env->RegisterNatives(cls, methods, sizeof(methods)/sizeof(methods[0]));'''
+    new_cmd = '''    jclass cls = env->FindClass("io/github/jdawg867/anvildesk/m8/M8CmdEntryPoint");
+    if (!cls) return; // Preserve pending ClassNotFoundException.
+    if (env->RegisterNatives(cls, methods, sizeof(methods)/sizeof(methods[0])) != JNI_OK)
+        return; // Preserve pending JNI registration exception.'''
+    if cmd.count(old_cmd) != 1:
+        raise ValueError("Pinned command JNI registration structure changed")
+    cmd = cmd.replace(old_cmd, new_cmd)
+    old_view = '''    jclass cls = env->FindClass("io/github/jdawg867/anvildesk/m8/M8LorieView");
+    env->RegisterNatives(cls, methods, sizeof(methods)/sizeof(methods[0]));'''
+    new_view = '''    jclass cls = env->FindClass("io/github/jdawg867/anvildesk/m8/M8LorieView");
+    if (!cls) return JNI_ERR;
+    if (env->RegisterNatives(cls, methods, sizeof(methods)/sizeof(methods[0])) != JNI_OK)
+        return JNI_ERR;'''
+    if activity.count(old_view) != 1:
+        raise ValueError("Pinned view JNI registration structure changed")
+    activity = activity.replace(old_view, new_view)
+    old_activity = '''    env->RegisterNatives(env->FindClass("io/github/jdawg867/anvildesk/m8/M8NativeActivityBridge"), mainActivityMethods, sizeof(mainActivityMethods)/sizeof(mainActivityMethods[0]));
+
+    registerCmdEntryPointNatives(env);
+
+    return JNI_VERSION_1_6;'''
+    new_activity = '''    jclass activityClass = env->FindClass("io/github/jdawg867/anvildesk/m8/M8NativeActivityBridge");
+    if (!activityClass) return JNI_ERR;
+    if (env->RegisterNatives(activityClass, mainActivityMethods, sizeof(mainActivityMethods)/sizeof(mainActivityMethods[0])) != JNI_OK)
+        return JNI_ERR;
+
+    registerCmdEntryPointNatives(env);
+    if (env->ExceptionCheck()) return JNI_ERR;
+
+    return JNI_VERSION_1_6;'''
+    if activity.count(old_activity) != 1:
+        raise ValueError("Pinned activity JNI registration structure changed")
+    activity = activity.replace(old_activity, new_activity)
     return cmd, activity
 
 def main() -> int:

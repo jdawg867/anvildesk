@@ -23,6 +23,7 @@ on:
       - 'scripts/test_patch_m8_x11_no_tcp.py'
       - 'scripts/patch-m8-x11-no-tcp.py'
       - 'scripts/audit-m8-native-server-lifecycle.py'
+      - 'scripts/audit-m8-jni-onload-safety.py'
       - 'scripts/verify-m8-server-process-boundary.py'
       - 'scripts/test_m8_server_process_boundary.py'
 
@@ -146,6 +147,14 @@ jobs:
             | tee m8-jni-onload-static-inventory.txt
           grep -q 'JNI_OnLoad' m8-jni-onload-static-inventory.txt
           echo 'M8_NATIVE_LOAD_AUTHORIZED=false' | tee -a m8-jni-onload-static-inventory.txt
+      - name: Audit JNI_OnLoad failure and registration blockers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 anvildesk-guard/scripts/audit-m8-jni-onload-safety.py \
+            upstream/lorie/src/main/cpp/lorie/activity.cpp \
+            | tee m8-jni-onload-safety-audit.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-jni-onload-safety-audit.txt
       - name: Build pinned upstream standalone ARM64 native library
         shell: bash
         run: |
@@ -272,6 +281,7 @@ jobs:
             m8-native-server-lifecycle-audit.txt
             m8-server-process-boundary-audit.txt
             m8-jni-onload-static-inventory.txt
+            m8-jni-onload-safety-audit.txt
             m8-upstream-aar-build.log
             m8-upstream-aar-inventory.txt
             m8-upstream-aar-paths.txt

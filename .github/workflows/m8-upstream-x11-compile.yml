@@ -136,6 +136,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Record static JNI_OnLoad initialization evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_file=upstream/lorie/src/main/cpp/lorie/activity.cpp
+          test -s "$source_file"
+          grep -n -E 'JNI_OnLoad|RegisterNatives|FindClass|GetMethodID|NewGlobalRef' "$source_file" \
+            | tee m8-jni-onload-static-inventory.txt
+          grep -q 'JNI_OnLoad' m8-jni-onload-static-inventory.txt
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false' | tee -a m8-jni-onload-static-inventory.txt
       - name: Build pinned upstream standalone ARM64 native library
         shell: bash
         run: |
@@ -261,6 +271,7 @@ jobs:
             m8-java-jni-signature-check.txt
             m8-native-server-lifecycle-audit.txt
             m8-server-process-boundary-audit.txt
+            m8-jni-onload-static-inventory.txt
             m8-upstream-aar-build.log
             m8-upstream-aar-inventory.txt
             m8-upstream-aar-paths.txt

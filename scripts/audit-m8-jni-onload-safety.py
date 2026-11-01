@@ -10,10 +10,13 @@ import sys
 REQUIRED = (
     "JNIEXPORT jint JNI_OnLoad",
     "RegisterNatives(cls, methods,",
-    "RegisterNatives(env->FindClass(",
+    "RegisterNatives(activityClass, mainActivityMethods,",
     "registerCmdEntryPointNatives(env)",
     "pthread_create(&freeformLookupThread",
     "pthread_join(freeformLookupThread",
+    "if (!cls) return JNI_ERR;",
+    "if (!activityClass) return JNI_ERR;",
+    "if (env->ExceptionCheck()) return JNI_ERR;",
 )
 TARGETS = (
     'FindClass("io/github/jdawg867/anvildesk/m8/M8LorieView")',
@@ -35,7 +38,7 @@ def audit(source: str) -> list[str]:
     return [
         "JNI_ONLOAD_CLASS_REGISTRATION=present",
         "JNI_ONLOAD_FREEFORM_LOOKUP_THREAD=present",
-        "JNI_ONLOAD_REGISTER_NATIVES_RESULT_VALIDATED=false",
+        "JNI_ONLOAD_REGISTER_NATIVES_RESULT_VALIDATED=true",
         "JNI_ONLOAD_PARTIAL_FAILURE_ROLLBACK_VERIFIED=false",
         "M8_NATIVE_LOAD_AUTHORIZED=false",
     ]

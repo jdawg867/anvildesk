@@ -12,6 +12,7 @@ CMD = '''void registerCmdEntryPointNatives(JNIEnv *env) {
     env->RegisterNatives(cls, methods, sizeof(methods)/sizeof(methods[0]));
 }'''
 ACT = '''JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
+    vm->AttachCurrentThread(&env, nullptr);
     jclass cls = env->FindClass("com/termux/x11/LorieView");
     env->RegisterNatives(cls, methods, sizeof(methods)/sizeof(methods[0]));
     env->RegisterNatives(env->FindClass("com/termux/x11/MainActivity"), mainActivityMethods, sizeof(mainActivityMethods)/sizeof(mainActivityMethods[0]));
@@ -33,6 +34,8 @@ class PatchTests(unittest.TestCase):
         self.assertIn("if (!cls) return JNI_ERR;", act)
         self.assertIn("if (!activityClass) return JNI_ERR;", act)
         self.assertIn("if (env->ExceptionCheck()) return JNI_ERR;", act)
+        self.assertIn("if (!preflightCmd) return JNI_ERR;", act)
+        self.assertLess(act.index("jclass preflightCmd"), act.index("env->RegisterNatives(cls"))
 
     def test_missing_registration_rejected(self):
         with self.assertRaises(ValueError):

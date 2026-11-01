@@ -27,16 +27,20 @@ def audit(source: str) -> list[str]:
     if source.count("JNIEXPORT jint JNI_OnLoad") != 1:
         raise ValueError("JNI_OnLoad entrypoint drift")
     for token in REQUIRED + TARGETS:
-        if source.count(token) != 1:
+        expected = 2 if token in TARGETS else 1
+        if source.count(token) != expected:
             raise ValueError("JNI registration or thread contract drift: " + token)
     start = source.index("JNIEXPORT jint JNI_OnLoad")
     body = source[start:]
     if "return JNI_VERSION_1_6;" not in body:
         raise ValueError("JNI_OnLoad result drift")
+    if body.index("jclass preflightCmd") > body.index("env->RegisterNatives(cls"):
+        raise ValueError("JNI class preflight occurs after first registration")
     # Explicit blockers: checked native registrations and controlled error
     # rollback have not been introduced into the upstream port.
     return [
         "JNI_ONLOAD_CLASS_REGISTRATION=present",
+        "JNI_ONLOAD_CLASS_PREFLIGHT=present",
         "JNI_ONLOAD_FREEFORM_LOOKUP_THREAD=present",
         "JNI_ONLOAD_REGISTER_NATIVES_RESULT_VALIDATED=true",
         "JNI_ONLOAD_PARTIAL_FAILURE_ROLLBACK_VERIFIED=false",

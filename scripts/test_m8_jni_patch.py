@@ -35,6 +35,9 @@ class PatchTests(unittest.TestCase):
         self.assertIn("if (!activityClass) return JNI_ERR;", act)
         self.assertIn("if (env->ExceptionCheck()) return JNI_ERR;", act)
         self.assertIn("if (!preflightCmd) return JNI_ERR;", act)
+        self.assertIn("env->UnregisterNatives(activityClass);", act)
+        self.assertGreaterEqual(act.count("env->UnregisterNatives(cls);"), 2)
+        self.assertIn("env->Throw(registrationError);", act)
         self.assertLess(act.index("jclass preflightCmd"), act.index("env->RegisterNatives(cls"))
 
     def test_missing_registration_rejected(self):

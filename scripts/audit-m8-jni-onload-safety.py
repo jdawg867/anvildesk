@@ -16,7 +16,7 @@ REQUIRED = (
     "pthread_join(freeformLookupThread",
     "if (!cls) return JNI_ERR;",
     "if (!activityClass) return JNI_ERR;",
-    "if (env->ExceptionCheck()) return JNI_ERR;",
+    "if (env->ExceptionCheck()) {",
 )
 TARGETS = (
     'FindClass("io/github/jdawg867/anvildesk/m8/M8LorieView")',
@@ -38,8 +38,8 @@ def audit(source: str) -> list[str]:
         raise ValueError("JNI class preflight occurs after first registration")
     if body.count("env->UnregisterNatives(cls);") < 2 or "env->UnregisterNatives(activityClass);" not in body:
         raise ValueError("Expected registration rollback missing")
-    # Explicit blockers: checked native registrations and controlled error
-    # rollback have not been introduced into the upstream port.
+    # These static checks establish patch presence, not atomic rollback or
+    # validated runtime recovery from partial JNI registration failure.
     return [
         "JNI_ONLOAD_CLASS_REGISTRATION=present",
         "JNI_ONLOAD_CLASS_PREFLIGHT=present",

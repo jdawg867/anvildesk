@@ -36,8 +36,18 @@ def audit(source: str) -> list[str]:
         raise ValueError("JNI_OnLoad result drift")
     if body.index("jclass preflightCmd") > body.index("env->RegisterNatives(cls"):
         raise ValueError("JNI class preflight occurs after first registration")
-    if body.count("env->UnregisterNatives(cls);") < 2 or "env->UnregisterNatives(activityClass);" not in body:
+    if body.count("env->UnregisterNatives(cls);") != 3 or "env->UnregisterNatives(activityClass);" not in body:
         raise ValueError("Expected registration rollback missing")
+    lookup = body.split("if (!activityClass) {", 1)[1].split(
+        "if (env->RegisterNatives(activityClass,", 1)[0]
+    registration = body.split("if (env->RegisterNatives(activityClass,", 1)[1].split(
+        "registerCmdEntryPointNatives(env);", 1)[0]
+    command = body.split("if (env->ExceptionCheck()) {", 1)[1].split(
+        "return JNI_VERSION_1_6;", 1)[0]
+    if "env->UnregisterNatives(cls);" not in lookup or "env->UnregisterNatives(cls);" not in registration:
+        raise ValueError("Activity lookup/registration rollback missing")
+    if "env->UnregisterNatives(activityClass);" not in command or "env->UnregisterNatives(cls);" not in command:
+        raise ValueError("Command rollback missing")
     # These static checks establish patch presence, not atomic rollback or
     # validated runtime recovery from partial JNI registration failure.
     return [

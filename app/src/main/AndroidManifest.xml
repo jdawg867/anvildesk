@@ -23,6 +23,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Inert M8 process separation scaffold: not startable or bindable. -->
+        <service
+            android:name=".m8.M8X11ProcessService"
+            android:process=":m8x11"
+            android:exported="false"
+            android:enabled="false" />
     </application>
 
 </manifest>

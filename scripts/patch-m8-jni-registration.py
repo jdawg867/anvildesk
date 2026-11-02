@@ -31,8 +31,12 @@ def patch(cmd: str, activity: str) -> tuple[str, str]:
     env->RegisterNatives(cls, methods, sizeof(methods)/sizeof(methods[0]));'''
     new_cmd = '''    jclass cls = env->FindClass("io/github/jdawg867/anvildesk/m8/M8CmdEntryPoint");
     if (!cls) return; // Preserve pending ClassNotFoundException.
-    if (env->RegisterNatives(cls, methods, sizeof(methods)/sizeof(methods[0])) != JNI_OK)
-        return; // Preserve pending JNI registration exception.'''
+    if (env->RegisterNatives(cls, methods, sizeof(methods)/sizeof(methods[0])) != JNI_OK) {
+        if (!env->ExceptionCheck())
+            env->ThrowNew(env->FindClass("java/lang/UnsatisfiedLinkError"),
+                          "M8 command JNI registration failed");
+        return;
+    }'''
     if cmd.count(old_cmd) != 1:
         raise ValueError("Pinned command JNI registration structure changed")
     cmd = cmd.replace(old_cmd, new_cmd)

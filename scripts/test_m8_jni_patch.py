@@ -30,6 +30,8 @@ class PatchTests(unittest.TestCase):
         self.assertIn("io/github/jdawg867/anvildesk/m8/M8NativeActivityBridge", act)
         self.assertNotIn('FindClass("com/termux/x11/', cmd + act)
         self.assertIn("if (!cls) return;", cmd)
+        self.assertIn('if (!env->ExceptionCheck())', cmd)
+        self.assertIn('env->ThrowNew(env->FindClass("java/lang/UnsatisfiedLinkError")', cmd)
         self.assertIn("!= JNI_OK", cmd)
         self.assertIn("if (!cls) return JNI_ERR;", act)
         self.assertIn("if (!activityClass) return JNI_ERR;", act)

@@ -14,7 +14,7 @@ COMPILER="$HOST/bin/x86_64-linux-android28-clang++"
 test -x "$COMPILER" || exit 1
 OUT="app/src/androidTest/jniLibs/x86_64"
 mkdir -p "$OUT"
-"$COMPILER" -shared -fPIC -std=c++17 -Wall -Wextra -Werror \
+"$COMPILER" -shared -fPIC -std=c++17 -static-libstdc++ -Wall -Wextra -Werror \
   -I"$HOST/sysroot/usr/include" \
   app/src/androidTest/cpp/m8_jni_failure_probe.cpp \
   -o "$OUT/libm8jnifailureprobe.so"

@@ -72,6 +72,16 @@ class RollbackInvariantTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self.assert_rollback_structure(broken)
 
+    def test_command_failure_does_not_throw_null(self):
+        command_failure = self.activity.split(
+            'if (env->ExceptionCheck()) {', 1)[1].split(
+            'return JNI_VERSION_1_6;', 1)[0]
+        self.assertIn('if (registrationError) {', command_failure)
+        self.assertLess(
+            command_failure.index('if (registrationError) {'),
+            command_failure.index('env->Throw(registrationError);'),
+        )
+
     def test_exception_capture_deletion_is_detected(self):
         broken = self.activity.replace(
             "jthrowable registrationError = env->ExceptionOccurred();", "", 1)

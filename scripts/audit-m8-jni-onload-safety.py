@@ -36,6 +36,8 @@ def audit(source: str) -> list[str]:
         raise ValueError("JNI_OnLoad result drift")
     if body.index("jclass preflightCmd") > body.index("env->RegisterNatives(cls"):
         raise ValueError("JNI class preflight occurs after first registration")
+    if body.count("env->UnregisterNatives(cls);") < 2 or "env->UnregisterNatives(activityClass);" not in body:
+        raise ValueError("Expected registration rollback missing")
     # Explicit blockers: checked native registrations and controlled error
     # rollback have not been introduced into the upstream port.
     return [
@@ -43,6 +45,7 @@ def audit(source: str) -> list[str]:
         "JNI_ONLOAD_CLASS_PREFLIGHT=present",
         "JNI_ONLOAD_FREEFORM_LOOKUP_THREAD=present",
         "JNI_ONLOAD_REGISTER_NATIVES_RESULT_VALIDATED=true",
+        "JNI_ONLOAD_REGISTRATION_ROLLBACK_PATCH=present",
         "JNI_ONLOAD_PARTIAL_FAILURE_ROLLBACK_VERIFIED=false",
         "M8_NATIVE_LOAD_AUTHORIZED=false",
     ]

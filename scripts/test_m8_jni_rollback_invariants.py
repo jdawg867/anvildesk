@@ -37,10 +37,46 @@ class RollbackInvariantTests(unittest.TestCase):
             self.activity.index("return JNI_VERSION_1_6;"),
         )
 
-    def test_failure_path_cannot_be_removed_unnoticed(self):
-        self.assertEqual(self.activity.count("env->UnregisterNatives(cls);"), 2)
+    def assert_rollback_structure(self, source):
+        activity_failure = source.split(
+            'if (env->RegisterNatives(activityClass,', 1)[1].split(
+            'registerCmdEntryPointNatives(env);', 1)[0]
+        command_failure = source.split(
+            'if (env->ExceptionCheck()) {', 1)[1].split(
+            'return JNI_VERSION_1_6;', 1)[0]
+        self.assertIn("env->UnregisterNatives(cls);", activity_failure)
+        self.assertIn("env->UnregisterNatives(cls);", command_failure)
+        self.assertIn("env->UnregisterNatives(activityClass);", command_failure)
+        self.assertIn("env->ExceptionOccurred();", activity_failure)
+        self.assertIn("env->ExceptionOccurred();", command_failure)
+        self.assertIn("env->Throw(registrationError);", command_failure)
+
+    def test_expected_failure_paths_satisfy_structure(self):
+        self.assert_rollback_structure(self.activity)
+
+    def test_activity_rollback_deletion_is_detected(self):
         broken = self.activity.replace("env->UnregisterNatives(cls);", "", 1)
-        self.assertEqual(broken.count("env->UnregisterNatives(cls);"), 1)
+        with self.assertRaises(AssertionError):
+            self.assert_rollback_structure(broken)
+
+    def test_command_rollback_deletion_is_detected(self):
+        broken = self.activity.replace(
+            "env->UnregisterNatives(activityClass);", "", 1)
+        with self.assertRaises(AssertionError):
+            self.assert_rollback_structure(broken)
+
+    def test_command_view_rollback_deletion_is_detected(self):
+        first = self.activity.index("env->UnregisterNatives(cls);")
+        broken = self.activity[:first + 1] + self.activity[first + 1:].replace(
+            "env->UnregisterNatives(cls);", "", 1)
+        with self.assertRaises(AssertionError):
+            self.assert_rollback_structure(broken)
+
+    def test_exception_capture_deletion_is_detected(self):
+        broken = self.activity.replace(
+            "jthrowable registrationError = env->ExceptionOccurred();", "", 1)
+        with self.assertRaises(AssertionError):
+            self.assert_rollback_structure(broken)
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,7 @@ on:
     paths:
       - '.github/workflows/m8-binder-emulator.yml'
       - 'app/src/androidTest/**'
+      - 'scripts/build-m8-jni-failure-probe.sh'
       - 'app/src/main/java/io/github/jdawg867/anvildesk/m8/M8X11ProcessService.java'
       - 'app/src/main/java/io/github/jdawg867/anvildesk/m8/M8ServiceStatusClient.java'
       - 'app/src/main/java/io/github/jdawg867/anvildesk/m8/M8ServiceProtocol.java'
@@ -58,6 +59,15 @@ jobs:
             exit 1
           fi
           echo "PASS: emulator APK has no native X11 library"
+      - name: Build test-only JNI_OnLoad failure probe
+        shell: bash
+        env:
+          ANVILDESK_M8_EMULATOR_PROBE: 'true'
+        run: |
+          set -euo pipefail
+          bash scripts/build-m8-jni-failure-probe.sh
+          test -s app/src/androidTest/jniLibs/x86_64/libm8jnifailureprobe.so
+          test ! -e app/src/main/jniLibs/x86_64/libm8jnifailureprobe.so
       - name: Enable KVM access on hosted runner
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules

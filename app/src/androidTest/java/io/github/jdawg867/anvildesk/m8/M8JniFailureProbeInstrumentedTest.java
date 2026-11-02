@@ -18,6 +18,9 @@ public final class M8JniFailureProbeInstrumentedTest {
             fail("An intentionally rejected JNI registration must prevent library loading");
         } catch (UnsatisfiedLinkError expected) {
             assertNotNull(expected.getMessage());
+            assertTrue("Probe must be rejected by JNI_OnLoad, not merely absent: " + expected,
+                    expected.getMessage().contains("JNI_ERR")
+                            || expected.getMessage().contains("JNI_OnLoad"));
         }
         assertFalse(M8NativeLoadingPolicy.mayLoadLibrary(null));
         // Reaching this assertion means the instrumentation process survived.

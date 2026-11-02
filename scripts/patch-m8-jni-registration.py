@@ -56,7 +56,17 @@ def patch(cmd: str, activity: str) -> tuple[str, str]:
         return JNI_ERR;
 
     registerCmdEntryPointNatives(env);
-    if (env->ExceptionCheck()) return JNI_ERR;
+    if (env->ExceptionCheck()) {
+        // Best-effort rollback of registrations performed earlier in OnLoad.
+        // Preserve the original Java exception across UnregisterNatives.
+        jthrowable registrationError = env->ExceptionOccurred();
+        env->ExceptionClear();
+        env->UnregisterNatives(activityClass);
+        env->UnregisterNatives(cls);
+        env->Throw(registrationError);
+        env->DeleteLocalRef(registrationError);
+        return JNI_ERR;
+    }
 
     return JNI_VERSION_1_6;'''
     if activity.count(old_activity) != 1:

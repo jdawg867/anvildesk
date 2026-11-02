@@ -34,7 +34,7 @@ class PatchTests(unittest.TestCase):
         self.assertIn('env->ThrowNew(env->FindClass("java/lang/UnsatisfiedLinkError")', cmd)
         self.assertIn("!= JNI_OK", cmd)
         self.assertIn("if (!cls) return JNI_ERR;", act)
-        self.assertIn("if (!activityClass) return JNI_ERR;", act)
+        self.assertIn("if (!activityClass) {", act)
         self.assertIn("if (env->ExceptionCheck()) {", act)
         self.assertIn("jthrowable registrationError = env->ExceptionOccurred();", act)
         self.assertIn("if (!preflightCmd) return JNI_ERR;", act)

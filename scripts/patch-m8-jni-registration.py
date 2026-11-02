@@ -52,8 +52,16 @@ def patch(cmd: str, activity: str) -> tuple[str, str]:
     return JNI_VERSION_1_6;'''
     new_activity = '''    jclass activityClass = env->FindClass("io/github/jdawg867/anvildesk/m8/M8NativeActivityBridge");
     if (!activityClass) return JNI_ERR;
-    if (env->RegisterNatives(activityClass, mainActivityMethods, sizeof(mainActivityMethods)/sizeof(mainActivityMethods[0])) != JNI_OK)
+    if (env->RegisterNatives(activityClass, mainActivityMethods, sizeof(mainActivityMethods)/sizeof(mainActivityMethods[0])) != JNI_OK) {
+        jthrowable registrationError = env->ExceptionOccurred();
+        env->ExceptionClear();
+        env->UnregisterNatives(cls);
+        if (registrationError) {
+            env->Throw(registrationError);
+            env->DeleteLocalRef(registrationError);
+        }
         return JNI_ERR;
+    }
 
     registerCmdEntryPointNatives(env);
     if (env->ExceptionCheck()) {

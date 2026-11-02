@@ -71,8 +71,10 @@ def patch(cmd: str, activity: str) -> tuple[str, str]:
         env->ExceptionClear();
         env->UnregisterNatives(activityClass);
         env->UnregisterNatives(cls);
-        env->Throw(registrationError);
-        env->DeleteLocalRef(registrationError);
+        if (registrationError) {
+            env->Throw(registrationError);
+            env->DeleteLocalRef(registrationError);
+        }
         return JNI_ERR;
     }
 

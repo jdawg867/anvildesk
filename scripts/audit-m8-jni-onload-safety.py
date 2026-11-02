@@ -15,7 +15,7 @@ REQUIRED = (
     "pthread_create(&freeformLookupThread",
     "pthread_join(freeformLookupThread",
     "if (!cls) return JNI_ERR;",
-    "if (!activityClass) return JNI_ERR;",
+    "if (!activityClass) {",
     "if (env->ExceptionCheck()) {",
 )
 TARGETS = (

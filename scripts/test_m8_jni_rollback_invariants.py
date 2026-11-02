@@ -44,6 +44,9 @@ class RollbackInvariantTests(unittest.TestCase):
         command_failure = source.split(
             'if (env->ExceptionCheck()) {', 1)[1].split(
             'return JNI_VERSION_1_6;', 1)[0]
+        lookup_failure = source.split("if (!activityClass) {", 1)[1].split(
+            "if (env->RegisterNatives(activityClass,", 1)[0]
+        self.assertIn("env->UnregisterNatives(cls);", lookup_failure)
         self.assertIn("env->UnregisterNatives(cls);", activity_failure)
         self.assertIn("env->UnregisterNatives(cls);", command_failure)
         self.assertIn("env->UnregisterNatives(activityClass);", command_failure)
@@ -55,7 +58,9 @@ class RollbackInvariantTests(unittest.TestCase):
         self.assert_rollback_structure(self.activity)
 
     def test_activity_rollback_deletion_is_detected(self):
-        broken = self.activity.replace("env->UnregisterNatives(cls);", "", 1)
+        anchor = self.activity.index("if (env->RegisterNatives(activityClass,")
+        broken = self.activity[:anchor] + self.activity[anchor:].replace(
+            "env->UnregisterNatives(cls);", "", 1)
         with self.assertRaises(AssertionError):
             self.assert_rollback_structure(broken)
 
@@ -66,9 +71,14 @@ class RollbackInvariantTests(unittest.TestCase):
             self.assert_rollback_structure(broken)
 
     def test_command_view_rollback_deletion_is_detected(self):
-        first = self.activity.index("env->UnregisterNatives(cls);")
+        first = self.activity.index("if (env->RegisterNatives(activityClass,")
         broken = self.activity[:first + 1] + self.activity[first + 1:].replace(
             "env->UnregisterNatives(cls);", "", 1)
+        with self.assertRaises(AssertionError):
+            self.assert_rollback_structure(broken)
+
+    def test_missing_activity_lookup_rollback_detected(self):
+        broken = self.activity.replace("env->UnregisterNatives(cls);", "", 1)
         with self.assertRaises(AssertionError):
             self.assert_rollback_structure(broken)
 

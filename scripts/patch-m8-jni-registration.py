@@ -67,7 +67,8 @@ def patch(cmd: str, activity: str) -> tuple[str, str]:
     # later class lookup fails. A failure during registration still needs
     # rollback and is deliberately reported as a remaining blocker.
     preflight_anchor = '    vm->AttachCurrentThread(&env, nullptr);'
-    if activity.count(preflight_anchor) != 1:
+    onload_index = activity.find("JNIEXPORT jint JNI_OnLoad")
+    if onload_index < 0 or activity[onload_index:].count(preflight_anchor) != 1:
         raise ValueError("Pinned JNI_OnLoad thread attachment changed")
     preflight = '''    if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env)
         return JNI_ERR;
@@ -80,7 +81,7 @@ def patch(cmd: str, activity: str) -> tuple[str, str]:
     env->DeleteLocalRef(preflightView);
     env->DeleteLocalRef(preflightActivity);
     env->DeleteLocalRef(preflightCmd);'''
-    activity = activity.replace(preflight_anchor, preflight)
+    activity = activity[:onload_index] + activity[onload_index:].replace(preflight_anchor, preflight, 1)
     return cmd, activity
 
 def main() -> int:

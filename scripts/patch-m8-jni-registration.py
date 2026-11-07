@@ -115,6 +115,24 @@ def patch(cmd: str, activity: str) -> tuple[str, str]:
     env->DeleteLocalRef(preflightActivity);
     env->DeleteLocalRef(preflightCmd);'''
     activity = activity[:onload_index] + activity[onload_index:].replace(preflight_anchor, preflight, 1)
+    # ART may invoke JNI during nativeLoad cleanup. Returning JNI_ERR while an
+    # exception remains pending can abort a CheckJNI-enabled process. Centralize
+    # rejection so every failure exit clears that exception before returning.
+    onload_index = activity.index("JNIEXPORT jint JNI_OnLoad")
+    onload = activity[onload_index:]
+    if onload.count("return JNI_ERR;") != 7:
+        raise ValueError("Pinned JNI_OnLoad failure-exit count changed")
+    onload = onload.replace("return JNI_ERR;", "return m8RejectOnLoad(env);")
+    helper = '''static jint m8RejectOnLoad(JNIEnv* env) {
+    if (env && env->ExceptionCheck()) {
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+    return JNI_ERR;
+}
+
+'''
+    activity = activity[:onload_index] + helper + onload
     return cmd, activity
 
 def main() -> int:

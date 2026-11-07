@@ -25,6 +25,7 @@ on:
       - 'scripts/patch-m8-x11-no-tcp.py'
       - 'scripts/audit-m8-native-server-lifecycle.py'
       - 'scripts/audit-m8-jni-onload-safety.py'
+      - 'scripts/audit-m8-renderer-contract.py'
       - 'scripts/verify-m8-server-process-boundary.py'
       - 'scripts/test_m8_server_process_boundary.py'
 
@@ -133,6 +134,16 @@ jobs:
             anvildesk-guard/app/src/main/java/io/github/jdawg867/anvildesk/m8/M8LorieView.java \
             anvildesk-guard/app/src/main/java/io/github/jdawg867/anvildesk/m8/M8NativeActivityBridge.java \
             | tee m8-java-jni-signature-check.txt
+      - name: Record remaining M8 renderer Java field and callback blockers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 anvildesk-guard/scripts/audit-m8-renderer-contract.py \
+            upstream/lorie/src/main/cpp/lorie/activity.cpp \
+            anvildesk-guard/app/src/main/java/io/github/jdawg867/anvildesk/m8/M8LorieView.java \
+            anvildesk-guard/app/src/main/java/io/github/jdawg867/anvildesk/m8/M8NativeActivityBridge.java \
+            | tee m8-renderer-contract-audit.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-renderer-contract-audit.txt
       - name: Install native host generators
         run: sudo apt-get update && sudo apt-get install -y bison flex ninja-build cmake python3 patch
       - name: Java 17
@@ -289,6 +300,7 @@ jobs:
             m8-server-process-boundary-audit.txt
             m8-jni-onload-static-inventory.txt
             m8-jni-onload-safety-audit.txt
+            m8-renderer-contract-audit.txt
             m8-upstream-aar-build.log
             m8-upstream-aar-inventory.txt
             m8-upstream-aar-paths.txt

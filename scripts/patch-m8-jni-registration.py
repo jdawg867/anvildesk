@@ -120,7 +120,7 @@ def patch(cmd: str, activity: str) -> tuple[str, str]:
     # rejection so every failure exit clears that exception before returning.
     onload_index = activity.index("JNIEXPORT jint JNI_OnLoad")
     onload = activity[onload_index:]
-    if onload.count("return JNI_ERR;") != 7:
+    if onload.count("return JNI_ERR;") != 9:
         raise ValueError("Pinned JNI_OnLoad failure-exit count changed")
     onload = onload.replace("return JNI_ERR;", "return m8RejectOnLoad(env);")
     helper = '''static jint m8RejectOnLoad(JNIEnv* env) {

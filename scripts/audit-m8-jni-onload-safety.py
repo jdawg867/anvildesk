@@ -30,9 +30,16 @@ def audit(source: str) -> list[str]:
         expected = 2 if token in TARGETS else 1
         if source.count(token) != expected:
             raise ValueError("JNI registration or thread contract drift: " + token)
-    if source.count("static jint m8RejectOnLoad(JNIEnv* env)") != 1:\n        raise ValueError("Missing common JNI failure helper")\n    helper = source.split("static jint m8RejectOnLoad(JNIEnv* env)", 1)[1].split("JNIEXPORT jint JNI_OnLoad", 1)[0]\n    if "env->ExceptionClear();" not in helper or "env->ExceptionDescribe();" not in helper:\n        raise ValueError("JNI failure helper must clear pending exceptions")\n    start = source.index("JNIEXPORT jint JNI_OnLoad")
+    if source.count("static jint m8RejectOnLoad(JNIEnv* env)") != 1:
+        raise ValueError("Missing common JNI failure helper")
+    helper = source.split("static jint m8RejectOnLoad(JNIEnv* env)", 1)[1].split("JNIEXPORT jint JNI_OnLoad", 1)[0]
+    if "env->ExceptionClear();" not in helper or "env->ExceptionDescribe();" not in helper:
+        raise ValueError("JNI failure helper must clear pending exceptions")
+    start = source.index("JNIEXPORT jint JNI_OnLoad")
     body = source[start:]
-    if body.count("return m8RejectOnLoad(env);") != 9 or "return JNI_ERR;" in body:\n        raise ValueError("Unsafe JNI_OnLoad failure return")\n    if "return JNI_VERSION_1_6;" not in body:
+    if body.count("return m8RejectOnLoad(env);") != 9 or "return JNI_ERR;" in body:
+        raise ValueError("Unsafe JNI_OnLoad failure return")
+    if "return JNI_VERSION_1_6;" not in body:
         raise ValueError("JNI_OnLoad result drift")
     if body.index("jclass preflightCmd") > body.index("env->RegisterNatives(cls"):
         raise ValueError("JNI class preflight occurs after first registration")

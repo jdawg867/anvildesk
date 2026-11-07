@@ -14,7 +14,7 @@ readelf -d "$M8_LIB" | tee m8-native-elf-dynamic.txt
 readelf -lW "$M8_LIB" | tee m8-native-elf-program-headers.txt
 readelf -d "$M8_LIB" | grep -F '(NEEDED)' | tee m8-native-needed.txt || true
 # JNI_OnLoad must be a dynamic export, not merely present in local symbols.
-readelf -Ws "$M8_LIB" | grep -E 'GLOBAL +DEFAULT +[0-9]+ +JNI_OnLoad
+readelf --dyn-syms -W "$M8_LIB" | grep -E 'GLOBAL +DEFAULT +[0-9]+ +JNI_OnLoad
 nm -D --defined-only "$M8_LIB" | grep -E 'Java_com_termux_x11_|JNI_OnLoad' | tee m8-native-jni-exports.txt || true
 echo "===== TERMUX-SPECIFIC CLASS REFERENCES ====="
 # ELF strings only: never interpret this as exhaustive source inspection.

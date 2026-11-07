@@ -13,6 +13,8 @@ CMD = '''void registerCmdEntryPointNatives(JNIEnv *env) {
 }'''
 ACT = '''JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved) {
     vm->AttachCurrentThread(&env, nullptr);
+    MainActivity.self = FindClassOrDie(env,  "com/termux/x11/MainActivity");
+    jfieldID activityField = env->GetFieldID(env->GetObjectClass(view), "activity", "Lcom/termux/x11/MainActivity;");
     jclass cls = env->FindClass("com/termux/x11/LorieView");
     env->RegisterNatives(cls, methods, sizeof(methods)/sizeof(methods[0]));
     env->RegisterNatives(env->FindClass("com/termux/x11/MainActivity"), mainActivityMethods, sizeof(mainActivityMethods)/sizeof(mainActivityMethods[0]));
@@ -29,6 +31,9 @@ class PatchTests(unittest.TestCase):
         self.assertIn("io/github/jdawg867/anvildesk/m8/M8LorieView", act)
         self.assertIn("io/github/jdawg867/anvildesk/m8/M8NativeActivityBridge", act)
         self.assertNotIn('FindClass("com/termux/x11/', cmd + act)
+        self.assertNotIn("Lcom/termux/x11/MainActivity;", act)
+        self.assertIn('FindClassOrDie(env,  "io/github/jdawg867/anvildesk/m8/M8NativeActivityBridge")', act)
+        self.assertIn("Lio/github/jdawg867/anvildesk/m8/M8NativeActivityBridge;", act)
         self.assertIn("if (!cls) return;", cmd)
         self.assertIn('if (!env->ExceptionCheck())', cmd)
         self.assertIn('env->ThrowNew(env->FindClass("java/lang/UnsatisfiedLinkError")', cmd)

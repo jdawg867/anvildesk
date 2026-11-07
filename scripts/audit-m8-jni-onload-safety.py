@@ -30,6 +30,15 @@ def audit(source: str) -> list[str]:
         expected = 2 if token in TARGETS else 1
         if source.count(token) != expected:
             raise ValueError("JNI registration or thread contract drift: " + token)
+    renderer_contract = (
+        'FindClassOrDie(env,  "io/github/jdawg867/anvildesk/m8/M8NativeActivityBridge")',
+        '"Lio/github/jdawg867/anvildesk/m8/M8NativeActivityBridge;"',
+    )
+    for marker in renderer_contract:
+        if source.count(marker) != 1:
+            raise ValueError("M8 renderer Java reference drift: " + marker)
+    if "Lcom/termux/x11/MainActivity;" in source or 'FindClassOrDie(env,  "com/termux/x11/MainActivity")' in source:
+        raise ValueError("Unadapted renderer Java type remains")
     if source.count("static jint m8RejectOnLoad(JNIEnv* env)") != 1:
         raise ValueError("Missing common JNI failure helper")
     helper = source.split("static jint m8RejectOnLoad(JNIEnv* env)", 1)[1].split("JNIEXPORT jint JNI_OnLoad", 1)[0]
@@ -58,6 +67,8 @@ def audit(source: str) -> list[str]:
     # These static checks establish patch presence, not atomic rollback or
     # validated runtime recovery from partial JNI registration failure.
     return [
+        "JNI_RENDERER_JAVA_TYPES_ADAPTED=true",
+        "JNI_RENDERER_JAVA_FIELD_VERIFIED=false",
         "JNI_ONLOAD_CLASS_REGISTRATION=present",
         "JNI_ONLOAD_CLASS_PREFLIGHT=present",
         "JNI_ONLOAD_FREEFORM_LOOKUP_THREAD=present",

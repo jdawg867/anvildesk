@@ -256,6 +256,10 @@ jobs:
             m8-staged-native-sha256.txt
             anvildesk-guard/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             m8-arm64-instrumentation-apk-sha256.txt
+            m8-native-elf-dynamic.txt
+            m8-native-elf-program-headers.txt
+            m8-native-needed.txt
+            m8-native-jni-onload-export.txt
             m8-native-jni-exports.txt
             m8-native-termux-references.txt
       - name: Record source and native build output hashes

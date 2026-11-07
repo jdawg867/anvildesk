@@ -11,6 +11,9 @@ NATIVE = '''
 GetFieldID(cls, "activity", "Lio/github/jdawg867/anvildesk/m8/M8NativeActivityBridge;");
 FindMethodOrDie(env, cls, "resetIme", "()V", JNI_FALSE);
 FindMethodOrDie(env, cls, "clientConnectedStateChanged", "()V", JNI_FALSE);
+GetMethodID(cls, "setClipboardText","(Ljava/lang/String;)V");
+GetMethodID(cls, "requestClipboard", "()V");
+GetMethodID(cls, "onSyncReply", "(I)V");
 '''
 VIEW = 'public final class M8LorieView { }'
 ACTIVITY = 'public final class M8NativeActivityBridge { }'
@@ -23,9 +26,18 @@ class RendererContractTests(unittest.TestCase):
         self.assertFalse(any(result.values()))
 
     def test_java_declarations_do_not_prove_runtime_safety(self):
-        view = 'M8NativeActivityBridge activity; void resetIme() {}'
+        view = ('M8NativeActivityBridge activity; void resetIme() {} '
+                'void setClipboardText(String value) {} void requestClipboard() {} '
+                'void onSyncReply(int serial) {}')
         activity = 'void clientConnectedStateChanged() {}'
         self.assertTrue(all(mod.audit(NATIVE, view, activity).values()))
+
+    def test_each_dynamic_callback_is_required(self):
+        for name in ("setClipboardText", "requestClipboard", "onSyncReply"):
+            with self.subTest(name=name):
+                with self.assertRaises(ValueError):
+                    mod.audit(NATIVE.replace('"' + name + '"', '"missingCallback"'),
+                              VIEW, ACTIVITY)
 
     def test_native_contract_drift_is_fail_closed(self):
         with self.assertRaises(ValueError):

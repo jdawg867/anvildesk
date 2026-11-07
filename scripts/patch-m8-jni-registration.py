@@ -25,6 +25,18 @@ def patch(cmd: str, activity: str) -> tuple[str, str]:
                       'FindClass("' + REPLACEMENTS["com/termux/x11/CmdEntryPoint"] + '")')
     for old in ("com/termux/x11/LorieView", "com/termux/x11/MainActivity"):
         activity = activity.replace(f'FindClass("{old}")', f'FindClass("{REPLACEMENTS[old]}")')
+    # Renderer initialization also refers to upstream Java types outside
+    # JNI_OnLoad. Fail closed if the pinned upstream occurrences drift.
+    renderer_types = {
+        'FindClassOrDie(env,  "com/termux/x11/MainActivity")':
+            'FindClassOrDie(env,  "io/github/jdawg867/anvildesk/m8/M8NativeActivityBridge")',
+        '"Lcom/termux/x11/MainActivity;"':
+            '"Lio/github/jdawg867/anvildesk/m8/M8NativeActivityBridge;"',
+    }
+    for old, new in renderer_types.items():
+        if activity.count(old) != 1:
+            raise ValueError("Pinned renderer Java contract changed: " + old)
+        activity = activity.replace(old, new, 1)
     # Check lookups and registrations without changing the exported helper
     # signature declared in upstream lorie.h.
     old_cmd = '''    jclass cls = env->FindClass("io/github/jdawg867/anvildesk/m8/M8CmdEntryPoint");

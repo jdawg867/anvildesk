@@ -11,15 +11,15 @@ import sys
 NATIVE_REQUIREMENTS = {
     "view_activity_field": (
         '"activity", "Lio/github/jdawg867/anvildesk/m8/M8NativeActivityBridge;"',
-        r"\\bM8NativeActivityBridge\\s+activity\\s*;",
+        r"\bM8NativeActivityBridge\s+activity\s*;",
     ),
     "view_reset_ime": (
         '"resetIme", "()V"',
-        r"\\bvoid\\s+resetIme\\s*\\(\\s*\\)",
+        r"\bvoid\s+resetIme\s*\(\s*\)",
     ),
     "activity_connection_callback": (
         '"clientConnectedStateChanged", "()V"',
-        r"\\bvoid\\s+clientConnectedStateChanged\\s*\\(\\s*\\)",
+        r"\bvoid\s+clientConnectedStateChanged\s*\(\s*\)",
     ),
 }
 

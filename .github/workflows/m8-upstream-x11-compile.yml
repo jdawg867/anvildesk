@@ -59,6 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m py_compile anvildesk-guard/scripts/audit-m8-jni-onload-safety.py anvildesk-guard/scripts/patch-m8-jni-registration.py
+          bash -n anvildesk-guard/scripts/audit-m8-native-jni.sh
           python3 -m unittest discover -s anvildesk-guard/scripts -p 'test_*m8*.py' -v
           python3 -m unittest discover -s anvildesk-guard/scripts -p 'test_m8_jni_registration.py' -v
           python3 -m unittest discover -s anvildesk-guard/scripts -p 'test_m8_jni_patch.py' -v

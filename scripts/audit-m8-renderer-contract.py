@@ -21,6 +21,18 @@ NATIVE_REQUIREMENTS = {
         '"clientConnectedStateChanged", "()V"',
         r"\bvoid\s+clientConnectedStateChanged\s*\(\s*\)",
     ),
+    "view_set_clipboard_text": (
+        '"setClipboardText","(Ljava/lang/String;)V"',
+        r"\bvoid\s+setClipboardText\s*\(\s*(?:String|java\.lang\.String)\s+\w+\s*\)",
+    ),
+    "view_request_clipboard": (
+        '"requestClipboard", "()V"',
+        r"\bvoid\s+requestClipboard\s*\(\s*\)",
+    ),
+    "view_sync_reply": (
+        '"onSyncReply", "(I)V"',
+        r"\bvoid\s+onSyncReply\s*\(\s*int\s+\w+\s*\)",
+    ),
 }
 
 

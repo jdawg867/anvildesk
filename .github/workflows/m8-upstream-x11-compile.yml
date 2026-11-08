@@ -29,6 +29,8 @@ on:
       - 'scripts/test_m8_renderer_contract.py'
       - 'scripts/audit-m8-renderer-lifecycle.py'
       - 'scripts/test_m8_renderer_lifecycle.py'
+      - 'scripts/patch-m8-renderer-looper-disconnect.py'
+      - 'scripts/test_m8_renderer_looper_disconnect.py'
       - 'scripts/verify-m8-server-process-boundary.py'
       - 'scripts/test_m8_server_process_boundary.py'
 
@@ -62,7 +64,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile anvildesk-guard/scripts/audit-m8-jni-onload-safety.py anvildesk-guard/scripts/patch-m8-jni-registration.py anvildesk-guard/scripts/audit-m8-renderer-contract.py anvildesk-guard/scripts/audit-m8-renderer-lifecycle.py
+          python3 -m py_compile anvildesk-guard/scripts/audit-m8-jni-onload-safety.py anvildesk-guard/scripts/patch-m8-jni-registration.py anvildesk-guard/scripts/audit-m8-renderer-contract.py anvildesk-guard/scripts/audit-m8-renderer-lifecycle.py anvildesk-guard/scripts/patch-m8-renderer-looper-disconnect.py
           bash -n anvildesk-guard/scripts/audit-m8-native-jni.sh
           python3 -m unittest discover -s anvildesk-guard/scripts -p 'test_*m8*.py' -v
           python3 -m unittest discover -s anvildesk-guard/scripts -p 'test_m8_jni_registration.py' -v
@@ -119,6 +121,15 @@ jobs:
           git -C upstream diff --check
           git -C upstream diff -- lorie/src/main/cpp/lorie/cmdentrypoint.cpp lorie/src/main/cpp/lorie/activity.cpp > m8-jni-registry-source.patch
           test -s m8-jni-registry-source.patch
+      - name: Patch and audit isolated renderer looper disconnect
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 anvildesk-guard/scripts/patch-m8-renderer-looper-disconnect.py \
+            upstream/lorie/src/main/cpp/lorie/activity.cpp \
+            | tee m8-renderer-looper-disconnect-audit.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-renderer-looper-disconnect-audit.txt
+          git -C upstream diff --check
       - name: Record adapted native JNI method signatures
         shell: bash
         run: |
@@ -313,6 +324,7 @@ jobs:
             m8-jni-onload-safety-audit.txt
             m8-renderer-contract-audit.txt
             m8-renderer-lifecycle-audit.txt
+            m8-renderer-looper-disconnect-audit.txt
             m8-upstream-aar-build.log
             m8-upstream-aar-inventory.txt
             m8-upstream-aar-paths.txt

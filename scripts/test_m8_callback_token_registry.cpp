@@ -106,6 +106,29 @@ static void testStoppedContextCannotBeRegistered() {
     check(!registry.enter(0), "invalid zero token was admitted");
 }
 
+static void testDuplicateContextRegistrationRejected() {
+    CallbackTokenRegistry registry;
+    auto context = std::make_shared<CallbackTokenRegistry::Context>();
+    const auto first = registry.registerContext(context);
+    bool rejected = false;
+    try {
+        (void)registry.registerContext(context);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected, "context received two active tokens");
+    { auto callback = registry.enter(first);
+      check(bool(callback), "duplicate rejection damaged original token"); }
+    auto independent = std::make_shared<CallbackTokenRegistry::Context>();
+    const auto second = registry.registerContext(independent);
+    check(second != first, "independent context reused token");
+    registry.unregisterAndDrain(first);
+    check(!registry.enter(first), "original token survived retirement");
+    { auto callback = registry.enter(second);
+      check(bool(callback), "retiring original stopped independent context"); }
+    registry.unregisterAndDrain(second);
+}
+
 static void testConcurrentAdmissionAndCancellation() {
     CallbackTokenRegistry registry;
     for (int round = 0; round < 64; ++round) {
@@ -131,6 +154,7 @@ int main() {
         testUnregisterWaitsForActiveLease();
         testDuplicateUnregisterWaitsForDrain();
         testStoppedContextCannotBeRegistered();
+        testDuplicateContextRegistrationRejected();
         testConcurrentAdmissionAndCancellation();
         std::cout << "M8_CALLBACK_TOKEN_REGISTRY_HOST_MODEL=PASS\n"
                   << "M8_ANDROID_USERDATA_TOKEN_ENCODING_VERIFIED=false\n"

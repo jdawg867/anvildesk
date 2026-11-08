@@ -103,6 +103,31 @@ static void testRemovalErrorRetainsOwnershipUntilRetry() {
     require(weak.expired(), "context survived completed drain");
 }
 
+static void testDuplicateFdCannotReplaceCallback() {
+    CallbackTokenRegistry registry;
+    FakeLooper looper;
+    const auto first = registry.registerContext(
+        std::make_shared<CallbackTokenRegistry::Context>());
+    const auto second = registry.registerContext(
+        std::make_shared<CallbackTokenRegistry::Context>());
+    looper.add(44, callbackFor(registry, first));
+    bool rejected = false;
+    try {
+        looper.add(44, callbackFor(registry, second));
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    require(rejected, "duplicate descriptor replaced active registration");
+    require(looper.snapshot(44)(), "original callback lost after duplicate add");
+    require(looper.remove(44) == FakeLooper::RemoveResult::Removed,
+            "failed to remove original registration");
+    registry.unregisterAndDrain(first);
+    require(!registry.enter(first), "old token admitted after cancellation");
+    // Failed duplicate registration must not cancel the unrelated context.
+    require(bool(registry.enter(second)), "rejected registration retired other token");
+    registry.unregisterAndDrain(second);
+}
+
 static void testUnknownDescriptorRemoval() {
     FakeLooper looper;
     require(looper.remove(100) == FakeLooper::RemoveResult::NotRegistered,
@@ -114,6 +139,7 @@ int main() {
         testCallbackAfterRemoval();
         testDescriptorReuseAndGenerations();
         testRemovalErrorRetainsOwnershipUntilRetry();
+        testDuplicateFdCannotReplaceCallback();
         testUnknownDescriptorRemoval();
         std::cout << "M8_FAKE_LOOPER_REMOVAL_MODEL=PASS\n"
                   << "M8_ANDROID_RAW_USERDATA_LIFETIME_VERIFIED=false\n"

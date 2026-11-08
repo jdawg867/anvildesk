@@ -92,6 +92,20 @@ static void testDuplicateUnregisterWaitsForDrain() {
     check(!registry.enter(token), "retired token accepted after stops");
 }
 
+static void testStoppedContextCannotBeRegistered() {
+    CallbackTokenRegistry registry;
+    auto stopped = std::make_shared<CallbackTokenRegistry::Context>();
+    stopped->drain.shutdownAndDrain();
+    bool rejected = false;
+    try {
+        (void)registry.registerContext(stopped);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected, "stopped context was assigned a new token");
+    check(!registry.enter(0), "invalid zero token was admitted");
+}
+
 static void testConcurrentAdmissionAndCancellation() {
     CallbackTokenRegistry registry;
     for (int round = 0; round < 64; ++round) {
@@ -116,6 +130,7 @@ int main() {
         testStaleTokenAndReconnect();
         testUnregisterWaitsForActiveLease();
         testDuplicateUnregisterWaitsForDrain();
+        testStoppedContextCannotBeRegistered();
         testConcurrentAdmissionAndCancellation();
         std::cout << "M8_CALLBACK_TOKEN_REGISTRY_HOST_MODEL=PASS\n"
                   << "M8_ANDROID_USERDATA_TOKEN_ENCODING_VERIFIED=false\n"

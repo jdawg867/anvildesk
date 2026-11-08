@@ -28,10 +28,18 @@ final class M8RendererSession {
 
     synchronized void input(int event) {
         if (disconnected) throw new IllegalStateException("Renderer disconnected");
-        lease.withHandle(handle -> {
-            backend.onInput(handle, event);
-            return null;
-        });
+        try {
+            lease.withHandle(handle -> {
+                backend.onInput(handle, event);
+                return null;
+            });
+        } catch (RuntimeException | Error failure) {
+            // The backend may have partly changed native state. Fail closed:
+            // stop input, preserve the original failure, and still allow
+            // exactly one explicit teardown through close().
+            disconnected = true;
+            throw failure;
+        }
     }
 
     /**

@@ -13,6 +13,8 @@ INVARIANTS = {
     "native_global_activity_ref": ('activity = env->NewGlobalRef(a);', 'env->DeleteGlobalRef(activity);'),
     "looper_fd_lifecycle": ('ALooper_addFd(', 'ALooper_removeFd('),
     "disconnect_callback": ('ALOOPER_EVENT_HANGUP', 'MainActivity.clientConnectedStateChanged'),
+    "raw_looper_callback_userdata": ('return ((LorieViewResources*) data)->xcallback(fd, events);',),
+    "thread_local_looper_teardown": ('ALooper_removeFd(ALooper_forThread(), connFd);',),
 }
 METHOD_DESTROY = '{"nativeDestroy", "(J)V"'
 METHOD_INIT = '{"nativeInit", "()J"'
@@ -37,6 +39,9 @@ def audit(source: str) -> list[str]:
         "M8_RENDERER_CALLBACK_TEARDOWN_SYNCHRONIZATION_VERIFIED=false",
         "M8_RENDERER_GLOBAL_JNI_REFERENCE_LIFETIME_VERIFIED=false",
         "M8_RENDERER_LOOPER_FD_OWNERSHIP_VERIFIED=false",
+        "M8_RENDERER_RAW_LOOPER_USERDATA=observed",
+        "M8_RENDERER_CALLBACK_ENTRY_QUIESCENCE_VERIFIED=false",
+        "M8_RENDERER_REGISTERED_LOOPER_TEARDOWN_VERIFIED=false",
         "M8_RENDERER_RUNTIME_VERIFIED=false",
         "M8_NATIVE_LOAD_AUTHORIZED=false",
     ]

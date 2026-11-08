@@ -12,7 +12,7 @@ import org.junit.Test;
 
 /** Synthetic-only; no JNI, native loading, Android graphics or file descriptors. */
 public final class M8RendererSessionTest {
-    private static final class FakeBackend implements M8RendererSession.Backend {
+    private static class FakeBackend implements M8RendererSession.Backend {
         final List<String> events = new ArrayList<>();
         @Override public void onInput(long h, int event) { events.add("input:" + h + ":" + event); }
         @Override public void onDisconnect(long h) { events.add("disconnect:" + h); }

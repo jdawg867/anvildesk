@@ -101,12 +101,12 @@ int main() {
         testQueuedCallbackAfterUnregister();
         testShutdownWaitsForRunningCallback();
         testReconnectUsesIndependentGeneration();
-        std::cout << "M8_CALLBACK_REGISTRATION_HOST_MODEL=PASS\\n"
-                  << "M8_ANDROID_RAW_USERDATA_LIFETIME_VERIFIED=false\\n"
-                  << "M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false\\n"
-                  << "M8_NATIVE_LOAD_AUTHORIZED=false\\n";
+        std::cout << "M8_CALLBACK_REGISTRATION_HOST_MODEL=PASS\n"
+                  << "M8_ANDROID_RAW_USERDATA_LIFETIME_VERIFIED=false\n"
+                  << "M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false\n"
+                  << "M8_NATIVE_LOAD_AUTHORIZED=false\n";
     } catch (const std::exception& e) {
-        std::cerr << "FAIL: " << e.what() << '\\n';
+        std::cerr << "FAIL: " << e.what() << '\n';
         return 1;
     }
 }

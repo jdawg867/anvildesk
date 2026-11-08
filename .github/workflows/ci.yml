@@ -154,6 +154,24 @@ jobs:
           grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-callback-token-registry-test.txt
           grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-callback-token-registry-test.txt
 
+      - name: Sanitize M8 fake Android looper removal model
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Wall -Wextra -Werror \
+            scripts/test_m8_fake_looper_removal.cpp \
+            -o /tmp/m8-test-fake-looper-removal
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 30s /tmp/m8-test-fake-looper-removal \
+            | tee m8-fake-looper-removal-test.txt
+          grep -Fx 'M8_FAKE_LOOPER_REMOVAL_MODEL=PASS' m8-fake-looper-removal-test.txt
+          grep -Fx 'M8_ANDROID_RAW_USERDATA_LIFETIME_VERIFIED=false' m8-fake-looper-removal-test.txt
+          grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-fake-looper-removal-test.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-fake-looper-removal-test.txt
+
       - name: Verify M8 renderer looper disconnect and lifecycle guards
         shell: bash
         run: |

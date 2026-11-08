@@ -1,5 +1,5 @@
 // Compile-only Android NDK boundary for M8 looper ownership.
-// No callback registration, JNI loading or production integration.
+// No runtime registration, JNI loading or production integration.
 // ALooper_removeFd does not promise queued callback quiescence.
 #include <android/looper.h>
 #include <type_traits>
@@ -11,6 +11,7 @@
 namespace anvildesk_m8 {
 
 enum class RemoveStatus { Removed, NotRegistered, Error };
+enum class AddStatus { Added, Error };
 
 class RetainedLooper final {
 public:
@@ -24,6 +25,21 @@ public:
     RetainedLooper& operator=(const RetainedLooper&) = delete;
     RetainedLooper(RetainedLooper&&) = delete;
     RetainedLooper& operator=(RetainedLooper&&) = delete;
+
+    // Non-owning userdata: the caller MUST ensure the pointed-to object
+    // survives a possible final callback after removeFd. Never pass a
+    // LorieViewResources* as data without an independent lifetime scheme.
+    // NDK addFd replaces a prior registration for the same fd; a production
+    // adapter must additionally prevent or coordinate that replacement.
+    AddStatus add(int fd, int events, ALooper_callbackFunc callback,
+                  void* stableUserdata) const {
+        if (!looper_ || fd < 0 || events == 0 || !callback || !stableUserdata)
+            return AddStatus::Error;
+        const int result = ALooper_addFd(
+            looper_, fd, ALOOPER_POLL_CALLBACK, events,
+            callback, stableUserdata);
+        return result == 1 ? AddStatus::Added : AddStatus::Error;
+    }
 
     RemoveStatus remove(int fd) const {
         if (!looper_ || fd < 0) return RemoveStatus::Error;
@@ -41,6 +57,10 @@ private:
 
 // Signature checks ensure we're compiling against actual Android NDK APIs.
 static_assert(std::is_same_v<decltype(ALooper_forThread()), ALooper*>);
+static_assert(std::is_same_v<decltype(ALooper_addFd(
+    static_cast<ALooper*>(nullptr), 1, ALOOPER_POLL_CALLBACK,
+    ALOOPER_EVENT_INPUT, static_cast<ALooper_callbackFunc>(nullptr),
+    static_cast<void*>(nullptr))), int>);
 static_assert(std::is_same_v<decltype(ALooper_removeFd(
     static_cast<ALooper*>(nullptr), 1)), int>);
 static_assert(!std::is_copy_constructible_v<RetainedLooper>);

@@ -14,6 +14,8 @@ env->DeleteGlobalRef(thiz);
 env->DeleteGlobalRef(activity);
 ALooper_addFd(looper, fd, flags, cb, data);
 ALooper_removeFd(looper, fd);
+ALooper_removeFd(ALooper_forThread(), connFd);
+return ((LorieViewResources*) data)->xcallback(fd, events);
 ALOOPER_EVENT_HANGUP;
 MainActivity.clientConnectedStateChanged;
 renderer.destroy();
@@ -33,6 +35,21 @@ class RendererLifecycleAuditTests(unittest.TestCase):
         self.assertIn("M8_RENDERER_DOUBLE_DESTROY_PROTECTION_VERIFIED=false", report)
         self.assertIn("M8_RENDERER_CALLBACK_TEARDOWN_SYNCHRONIZATION_VERIFIED=false", report)
         self.assertIn("M8_NATIVE_LOAD_AUTHORIZED=false", report)
+        self.assertIn("M8_RENDERER_RAW_LOOPER_USERDATA=observed", report)
+        self.assertIn("M8_RENDERER_CALLBACK_ENTRY_QUIESCENCE_VERIFIED=false", report)
+        self.assertIn("M8_RENDERER_REGISTERED_LOOPER_TEARDOWN_VERIFIED=false", report)
+
+    def test_missing_raw_looper_userdata_rejected(self):
+        with self.assertRaises(ValueError):
+            mod.audit(SOURCE.replace(
+                "return ((LorieViewResources*) data)->xcallback(fd, events);", ""
+            ))
+
+    def test_missing_thread_local_teardown_rejected(self):
+        with self.assertRaises(ValueError):
+            mod.audit(SOURCE.replace(
+                "ALooper_removeFd(ALooper_forThread(), connFd);", ""
+            ))
 
     def test_missing_global_reference_release_rejected(self):
         with self.assertRaises(ValueError):

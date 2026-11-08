@@ -28,6 +28,10 @@ public:
     Token registerContext(std::shared_ptr<Context> context) {
         if (!context) throw std::invalid_argument("null callback context");
         std::lock_guard<std::mutex> lock(mutex_);
+        // A context that has already begun draining cannot be resurrected
+        // by handing it a fresh registration token.
+        if (context->drain.stopping())
+            throw std::invalid_argument("stopped callback context");
         // Never recycle tokens, even after unregister. Fail shut on exhaustion.
         if (next_ == std::numeric_limits<Token>::max())
             throw std::overflow_error("callback token exhausted");

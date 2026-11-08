@@ -17,6 +17,34 @@ class RendererLooperDisconnectPatchTests(unittest.TestCase):
         self.assertEqual(updated.count("int LorieViewResources::xcallback("), 1)
         self.assertIn("other native methods", updated)
 
+    def test_stale_fd_guard_precedes_all_disconnect_side_effects(self):
+        # Structural regression: a queued callback for an old descriptor
+        # must return before touching the new connection or renderer.
+        callback = mod.patch(mod.OLD)
+        guard = callback.index("if (fd != connFd)\\n        return 0;")
+        side_effects = (
+            "ALooper_removeFd(",
+            "close(connFd);",
+            "connFd = -1;",
+            "renderer.setSharedState(nullptr);",
+            "renderer.removeAllBuffers();",
+            "env->CallVoidMethod(",
+        )
+        for token in side_effects:
+            with self.subTest(token=token):
+                self.assertGreater(callback.index(token), guard)
+
+    def test_disconnect_unregister_and_close_order(self):
+        callback = mod.patch(mod.OLD)
+        self.assertLess(callback.index("ALooper_removeFd("),
+                        callback.index("close(connFd);"))
+        self.assertLess(callback.index("close(connFd);"),
+                        callback.index("connFd = -1;"))
+        self.assertIn("return 0;", callback)
+        self.assertNotIn("return 1;", callback)
+        # This only checks the pinned code transformation, not that the
+        # Android looper has quiesced before native object destruction.
+
     def test_double_patch_rejected(self):
         with self.assertRaises(ValueError):
             mod.patch(mod.patch(mod.OLD))

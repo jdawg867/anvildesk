@@ -283,3 +283,36 @@ userdata, thread-local teardown, and unresolved callback quiescence.
 native lifecycle, production `libXlorie.so` load authorization, or Samsung
 acceptance is implied by this document. Keep PR #21 draft and native loading
 disabled.
+
+## Android NDK ALooper removal semantics (verified API contract)
+
+The Android NDK documentation for `ALooper_removeFd` explicitly says that
+a callback might already be executing, or might execute once more when an FD
+was already signalled, even after removal returns. Its success result
+permits closing the descriptor but **does not establish callback quiescence**.
+The API can be invoked from another thread; returning `0` from a callback
+unregisters its FD. See the Android NDK reference:
+https://developer.android.com/ndk/reference/group/looper .
+
+This narrows the implementation requirements:
+
+- Retain the *specific* registering `ALooper*` with
+  `ALooper_acquire` and release it with `ALooper_release`, rather
+  than relying on `ALooper_forThread()` during destruction.
+- Never delete raw callback userdata merely because `ALooper_removeFd`
+  has returned. A stable, distinct registration identity must survive any
+  already-running or final callback. The host-only token registry's
+  lifetime does not itself solve Android's `void*` userdata lifetime.
+- Reject callbacks for retired registrations and require a proven
+  callback-completion handoff before releasing userdata and JNI/renderer
+  state. Destruction on the callback thread cannot block on its own lease.
+- Treat `removeFd` return values 1, 0 and -1 separately. Do not claim
+  successful unregistration on error; fail closed and preserve ownership
+  until cleanup is established.
+- Test disconnect, concurrent stop, reconnect, descriptor number reuse,
+  and callback-after-remove using a deterministic host model, then
+  separately validate with Android instrumentation and Samsung.
+
+**This documents the Android API contract, not implementation success.**
+`M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false` and
+`M8_NATIVE_LOAD_AUTHORIZED=false` remain mandatory.

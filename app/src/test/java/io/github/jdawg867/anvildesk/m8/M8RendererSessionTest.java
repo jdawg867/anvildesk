@@ -71,6 +71,50 @@ public final class M8RendererSessionTest {
         assertEquals(Arrays.asList("disconnect:9", "destroy:9"), backend.events);
     }
 
+    @Test public void failedInputIsTerminalForInputButAllowsOneDestroy() {
+        FakeBackend backend = new FakeBackend() {
+            @Override public void onInput(long h, int event) {
+                super.onInput(h, event);
+                throw new IllegalStateException("synthetic partial input failure");
+            }
+        };
+        M8RendererSession session = new M8RendererSession(31, backend);
+        try {
+            session.input(1);
+            fail("Injected backend failure should propagate");
+        } catch (IllegalStateException expected) {
+            assertEquals("synthetic partial input failure", expected.getMessage());
+        }
+        try {
+            session.input(2);
+            fail("Input must remain disabled after backend failure");
+        } catch (IllegalStateException expected) {
+            assertEquals("Renderer disconnected", expected.getMessage());
+        }
+        assertFalse(session.disconnect());
+        assertTrue(session.close());
+        assertFalse(session.close());
+        assertEquals(Arrays.asList("input:31:1", "destroy:31"), backend.events);
+    }
+
+    @Test public void failedBackendWithErrorAlsoDisablesInput() {
+        FakeBackend backend = new FakeBackend() {
+            @Override public void onInput(long h, int event) {
+                throw new AssertionError("synthetic fatal callback failure");
+            }
+        };
+        M8RendererSession session = new M8RendererSession(32, backend);
+        try {
+            session.input(3);
+            fail("Expected injected Error");
+        } catch (AssertionError expected) {
+            assertEquals("synthetic fatal callback failure", expected.getMessage());
+        }
+        assertFalse(session.disconnect());
+        assertTrue(session.close());
+        assertEquals(Arrays.asList("destroy:32"), backend.events);
+    }
+
     @Test public void reentrantCloseIsRejectedUntilInputReturns() {
         AtomicReference<M8RendererSession> holder = new AtomicReference<>();
         FakeBackend backend = new FakeBackend() {

@@ -9,9 +9,10 @@ import java.util.Objects;
  * use synthetic handles. The native implementation still needs independent
  * synchronization and teardown review before this can guard a real pointer.
  *
- * A lease cannot escape its monitor through a returned handle: operations are
- * performed synchronously while holding the lease monitor. Callers must never
- * retain the handle supplied to an operation.
+ * Operations execute while holding the lease monitor, but Java cannot stop a
+ * callback from retaining or returning the raw handle. That is a contract the
+ * eventual reviewed JNI adapter must enforce. This class alone does not
+ * protect native callback threads or guarantee memory safety.
  */
 final class M8RendererHandleLease {
     interface Operation<T> {

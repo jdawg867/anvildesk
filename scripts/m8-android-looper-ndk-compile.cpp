@@ -14,7 +14,7 @@
 namespace anvildesk_m8 {
 
 enum class RemoveStatus { Removed, NotRegistered, NotTracked, Error };
-enum class AddStatus { Added, AlreadyTracked, Error };
+enum class AddStatus { Added, AlreadyTracked, ShuttingDown, Error };
 
 class RetainedLooper final {
 public:
@@ -33,6 +33,14 @@ public:
     RetainedLooper(RetainedLooper&&) = delete;
     RetainedLooper& operator=(RetainedLooper&&) = delete;
 
+    // Once shutdown starts, no later registration may reopen the adapter.
+    // Call this before deregistration and callback-drain coordination.
+    // This only blocks add() calls; it does NOT drain callbacks.
+    void beginShutdown() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        shuttingDown_ = true;
+    }
+
     // Non-owning userdata: the caller MUST ensure the pointed-to object
     // survives a possible final callback after removeFd. Never pass a
     // LorieViewResources* as data without an independent lifetime scheme.
@@ -44,6 +52,7 @@ public:
         if (!looper_ || fd < 0 || events == 0 || !callback || !stableUserdata)
             return AddStatus::Error;
         std::lock_guard<std::mutex> lock(mutex_);
+        if (shuttingDown_) return AddStatus::ShuttingDown;
         if (registered_.count(fd)) return AddStatus::AlreadyTracked;
         const int result = ALooper_addFd(
             looper_, fd, ALOOPER_POLL_CALLBACK, events,
@@ -68,6 +77,7 @@ private:
     ALooper* const looper_;
     std::mutex mutex_;
     std::unordered_set<int> registered_;
+    bool shuttingDown_ = false;
 };
 
 // Signature checks ensure we're compiling against actual Android NDK APIs.

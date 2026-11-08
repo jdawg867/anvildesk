@@ -101,6 +101,23 @@ jobs:
           grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-native-callback-drain-test.txt
           grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-native-callback-drain-test.txt
 
+      - name: Sanitize M8 callback-drain host concurrency test
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Wall -Wextra -Werror \
+            scripts/test_m8_native_callback_drain.cpp \
+            -o /tmp/m8-test-native-callback-drain-sanitized
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 30s /tmp/m8-test-native-callback-drain-sanitized \
+            | tee m8-native-callback-drain-sanitized.txt
+          grep -Fx 'M8_NATIVE_CALLBACK_DRAIN_SYNTHETIC_TEST=PASS' m8-native-callback-drain-sanitized.txt
+          grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-native-callback-drain-sanitized.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-native-callback-drain-sanitized.txt
+
       - name: Verify M8 renderer looper disconnect and lifecycle guards
         shell: bash
         run: |

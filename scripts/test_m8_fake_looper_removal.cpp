@@ -21,7 +21,9 @@ class FakeLooper {
 public:
     using Callback = std::function<bool()>;
     enum class RemoveResult { Removed, NotRegistered, Error };
+    void beginShutdown() { shuttingDown_ = true; }
     void add(int fd, Callback cb) {
+        if (shuttingDown_) throw std::runtime_error("looper shutting down");
         if (!entries_.emplace(fd, std::move(cb)).second)
             throw std::runtime_error("duplicate descriptor");
     }
@@ -36,6 +38,7 @@ public:
     void failRemove(bool fail) { failRemove_ = fail; }
     bool hasFd(int fd) const { return entries_.count(fd) != 0; }
 private:
+    bool shuttingDown_ = false;
     bool failRemove_ = false;
     std::unordered_map<int, Callback> entries_;
 };
@@ -169,6 +172,31 @@ static void testRemoveThenDrainWithInflightAndQueuedCallback() {
     require(weak.expired(), "context survived completed removal and drain");
 }
 
+static void testShutdownClosesAdmissionButAllowsRemoval() {
+    CallbackTokenRegistry registry;
+    FakeLooper looper;
+    const auto activeToken = registry.registerContext(
+        std::make_shared<CallbackTokenRegistry::Context>());
+    const auto refusedToken = registry.registerContext(
+        std::make_shared<CallbackTokenRegistry::Context>());
+    looper.add(46, callbackFor(registry, activeToken));
+    looper.beginShutdown();
+    looper.beginShutdown(); // idempotent gate
+    bool rejected = false;
+    try {
+        looper.add(47, callbackFor(registry, refusedToken));
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    require(rejected, "shutdown admitted new descriptor");
+    require(!looper.hasFd(47), "rejected descriptor was still installed");
+    require(looper.remove(46) == FakeLooper::RemoveResult::Removed,
+            "shutdown blocked removal of registered descriptor");
+    registry.unregisterAndDrain(activeToken);
+    registry.unregisterAndDrain(refusedToken);
+    require(!registry.enter(activeToken), "retired callback still admitted");
+}
+
 static void testUnknownDescriptorRemoval() {
     FakeLooper looper;
     require(looper.remove(100) == FakeLooper::RemoveResult::NotRegistered,
@@ -182,6 +210,7 @@ int main() {
         testRemovalErrorRetainsOwnershipUntilRetry();
         testDuplicateFdCannotReplaceCallback();
         testRemoveThenDrainWithInflightAndQueuedCallback();
+        testShutdownClosesAdmissionButAllowsRemoval();
         testUnknownDescriptorRemoval();
         std::cout << "M8_FAKE_LOOPER_REMOVAL_MODEL=PASS\n"
                   << "M8_ANDROID_RAW_USERDATA_LIFETIME_VERIFIED=false\n"

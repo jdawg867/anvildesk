@@ -237,3 +237,49 @@ The upstream source remains pinned at `termux/termux-x11@fa3a8b430e2896a19f44c99
 The Android build now supports `-PanvildeskM8ProductionCandidate=true`. This deliberately retains the original application ID `io.github.jdawg867.anvildesk`, stages the patched ARM64 X11 payload only when explicitly selected, and fails configuration unless the complete existing stable development-signing environment is supplied. It cannot be combined with the separate `m8spike` variant.
 
 **No production-ID candidate has been installed, verified against a Samsung signer, or released.** A valid signature is necessary but not sufficient: native Termux-specific JNI registration, server lifecycle, socket handshakes, rendering, and input remain unimplemented. Never install a candidate solely because this Gradle gate succeeds. The previously added read-only `scripts/verify-m8-production-upgrade.sh` must be run against the actual candidate and installed APK, with certificate fingerprints matching, before considering any upgrade.
+
+## Native callback teardown contract (design gate; not implemented)
+
+The pinned `termux-x11` renderer registers an Android `ALooper_addFd` callback
+with a raw `LorieViewResources*` userdata pointer. Its destructor calls
+`ALooper_removeFd(ALooper_forThread(), connFd)`, closes the descriptor, and
+destroys renderer/JNI state. A callback can be queued or running while teardown
+begins; thread-local looper lookup is not proof of ownership of the looper that
+originally registered the callback. A stale-FD guard is necessary but insufficient.
+
+Required before enabling `libXlorie.so` execution:
+
+1. **Record the registering looper.** Establish which thread owns registration
+   and how a strong reference to that `ALooper*` is held/released for each
+   registration. Check `ALooper_addFd` and `ALooper_removeFd` results and
+   ensure reconnect changes registration generation before reusing resources.
+2. **Separate registration state from renderer lifetime.** A callback must not
+   dereference freed `LorieViewResources` memory merely to decide whether it
+   may acquire a callback lease. A shutdown barrier alone cannot protect the
+   initial raw userdata dereference. Define stable callback context ownership
+   and a registration/cancellation handshake before implementing.
+3. **Stop in the correct order.** Atomically stop callback admission, remove
+   the registered FD from the recorded looper, prevent new callback entry,
+   and wait for any already-running callbacks *off the callback thread*.
+   Remove/close ordering must account for descriptor reuse. Never hold a
+   mutex needed by callbacks while waiting for them to drain.
+4. **Destroy only after quiescence.** Release renderer buffers, Android
+   `Surface`, global JNI references, and callback context only when no
+   callback or Java native entry point can access them. Avoid treating a
+   raw Java `jlong` handle check or `destroyed` flag as a synchronization
+   primitive; double destroy and calls racing with destroy require an
+   independently verified ownership policy.
+5. **Test without shipping.** Add deterministic races for stop vs callback
+   start, callback vs reconnect, duplicate stop, descriptor reuse, and stop
+   during disconnect; use ASan/UBSan host tests and build-time pinned source
+   audits. Android instrumentation and physical Samsung teardown/restart
+   evidence remain separate acceptance gates.
+
+Current evidence: standalone `CallbackDrain` concurrency tests and its
+ASan/UBSan CI pass; the pinned renderer source audit records raw callback
+userdata, thread-local teardown, and unresolved callback quiescence.
+
+**Status: DESIGN ONLY.** No Android looper quiescence proof, integrated
+native lifecycle, production `libXlorie.so` load authorization, or Samsung
+acceptance is implied by this document. Keep PR #21 draft and native loading
+disabled.

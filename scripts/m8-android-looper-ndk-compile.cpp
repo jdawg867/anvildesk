@@ -2,7 +2,9 @@
 // No runtime registration, JNI loading or production integration.
 // ALooper_removeFd does not promise queued callback quiescence.
 #include <android/looper.h>
+#include <mutex>
 #include <type_traits>
+#include <unordered_set>
 
 #if !defined(__ANDROID__)
 #error "This translation unit must be compiled with an Android NDK target."
@@ -10,8 +12,8 @@
 
 namespace anvildesk_m8 {
 
-enum class RemoveStatus { Removed, NotRegistered, Error };
-enum class AddStatus { Added, Error };
+enum class RemoveStatus { Removed, NotRegistered, NotTracked, Error };
+enum class AddStatus { Added, AlreadyTracked, Error };
 
 class RetainedLooper final {
 public:
@@ -29,30 +31,38 @@ public:
     // Non-owning userdata: the caller MUST ensure the pointed-to object
     // survives a possible final callback after removeFd. Never pass a
     // LorieViewResources* as data without an independent lifetime scheme.
-    // NDK addFd replaces a prior registration for the same fd; a production
-    // adapter must additionally prevent or coordinate that replacement.
+    // NDK addFd would replace a prior registration for the same fd.
+    // Serialize registration and reject descriptors already owned by this
+    // adapter. Other code using the same looper must coordinate separately.
     AddStatus add(int fd, int events, ALooper_callbackFunc callback,
-                  void* stableUserdata) const {
+                  void* stableUserdata) {
         if (!looper_ || fd < 0 || events == 0 || !callback || !stableUserdata)
             return AddStatus::Error;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (registered_.count(fd)) return AddStatus::AlreadyTracked;
         const int result = ALooper_addFd(
             looper_, fd, ALOOPER_POLL_CALLBACK, events,
             callback, stableUserdata);
-        return result == 1 ? AddStatus::Added : AddStatus::Error;
+        if (result != 1) return AddStatus::Error;
+        registered_.insert(fd);
+        return AddStatus::Added;
     }
 
-    RemoveStatus remove(int fd) const {
+    RemoveStatus remove(int fd) {
         if (!looper_ || fd < 0) return RemoveStatus::Error;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!registered_.count(fd)) return RemoveStatus::NotTracked;
         const int result = ALooper_removeFd(looper_, fd);
-        switch (result) {
-            case 1: return RemoveStatus::Removed;
-            case 0: return RemoveStatus::NotRegistered;
-            default: return RemoveStatus::Error;
-        }
+        if (result < 0) return RemoveStatus::Error; // retain tracking for retry
+        registered_.erase(fd);
+        return result == 1 ? RemoveStatus::Removed
+                           : RemoveStatus::NotRegistered;
     }
 
 private:
     ALooper* const looper_;
+    std::mutex mutex_;
+    std::unordered_set<int> registered_;
 };
 
 // Signature checks ensure we're compiling against actual Android NDK APIs.
@@ -69,4 +79,6 @@ static_assert(!std::is_move_constructible_v<RetainedLooper>);
 } // namespace anvildesk_m8
 
 // No 'main': this translation unit is only compiled with -fsyntax-only.
-// In particular, it does NOT solve void* callback userdata lifetime.
+// It does NOT solve void* callback userdata lifetime, external looper users,
+// callbacks arriving after removal, or destruction with tracked FDs.
+// A real implementation must also refuse destruction while FDs are tracked.

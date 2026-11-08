@@ -2,6 +2,7 @@
 // No runtime registration, JNI loading or production integration.
 // ALooper_removeFd does not promise queued callback quiescence.
 #include <android/looper.h>
+#include <exception>
 #include <mutex>
 #include <type_traits>
 #include <unordered_set>
@@ -20,7 +21,11 @@ public:
     explicit RetainedLooper(ALooper* registeringLooper) : looper_(registeringLooper) {
         if (looper_) ALooper_acquire(looper_);
     }
-    ~RetainedLooper() {
+    // Fail closed rather than silently orphan active registrations.
+    // Owner must stop registration attempts and join all adapter callers
+    // BEFORE destruction; this is not an Android callback-drain barrier.
+    ~RetainedLooper() noexcept {
+        if (!registered_.empty()) std::terminate();
         if (looper_) ALooper_release(looper_);
     }
     RetainedLooper(const RetainedLooper&) = delete;
@@ -80,5 +85,6 @@ static_assert(!std::is_move_constructible_v<RetainedLooper>);
 
 // No 'main': this translation unit is only compiled with -fsyntax-only.
 // It does NOT solve void* callback userdata lifetime, external looper users,
-// callbacks arriving after removal, or destruction with tracked FDs.
-// A real implementation must also refuse destruction while FDs are tracked.
+// callbacks arriving after removal, or coordination with other looper users.
+// Outstanding tracked FDs are a fatal programming error at destruction;
+// even zero tracked FDs does NOT prove callbacks are quiescent.

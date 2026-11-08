@@ -32,6 +32,12 @@ public:
         // by handing it a fresh registration token.
         if (context->drain.stopping())
             throw std::invalid_argument("stopped callback context");
+        // One context must have exactly one live registration. Otherwise
+        // retiring one token would shut down another token's callbacks.
+        for (const auto& record : registered_) {
+            if (record.second->context.get() == context.get())
+                throw std::invalid_argument("context already registered");
+        }
         // Never recycle tokens, even after unregister. Fail shut on exhaustion.
         if (next_ == std::numeric_limits<Token>::max())
             throw std::overflow_error("callback token exhausted");

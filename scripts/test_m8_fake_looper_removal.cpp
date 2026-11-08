@@ -197,6 +197,44 @@ static void testShutdownClosesAdmissionButAllowsRemoval() {
     require(!registry.enter(activeToken), "retired callback still admitted");
 }
 
+// A failed remove during teardown must preserve the old registration,
+// reject any new registration, and defer callback context destruction.
+// The fake queue owns callback closures; this is NOT Android raw userdata.
+static void testShutdownRemovalErrorRetryKeepsContext() {
+    CallbackTokenRegistry registry;
+    FakeLooper looper;
+    auto context = std::make_shared<CallbackTokenRegistry::Context>();
+    std::weak_ptr<CallbackTokenRegistry::Context> weak = context;
+    const auto token = registry.registerContext(context);
+    looper.add(48, callbackFor(registry, token));
+    auto queued = looper.snapshot(48);
+    context.reset();
+    looper.beginShutdown();
+    looper.failRemove(true);
+    require(looper.remove(48) == FakeLooper::RemoveResult::Error,
+            "remove error was not propagated");
+    require(looper.hasFd(48), "failed removal lost descriptor registration");
+    require(!weak.expired(), "context destroyed after failed remove");
+    require(queued(), "callback context was retired before removal succeeded");
+
+    bool newAddRejected = false;
+    try {
+        looper.add(49, callbackFor(registry, token));
+    } catch (const std::runtime_error&) {
+        newAddRejected = true;
+    }
+    require(newAddRejected, "failed removal reopened registration admission");
+    require(!looper.hasFd(49), "failed registration added a new descriptor");
+
+    looper.failRemove(false);
+    require(looper.remove(48) == FakeLooper::RemoveResult::Removed,
+            "failed removal could not be retried");
+    registry.unregisterAndDrain(token);
+    require(!queued(), "late callback admitted after successful drain");
+    require(weak.expired(), "callback context retained after removal and drain");
+    require(!looper.hasFd(48), "original fd remained registered");
+}
+
 static void testUnknownDescriptorRemoval() {
     FakeLooper looper;
     require(looper.remove(100) == FakeLooper::RemoveResult::NotRegistered,
@@ -211,6 +249,7 @@ int main() {
         testDuplicateFdCannotReplaceCallback();
         testRemoveThenDrainWithInflightAndQueuedCallback();
         testShutdownClosesAdmissionButAllowsRemoval();
+        testShutdownRemovalErrorRetryKeepsContext();
         testUnknownDescriptorRemoval();
         std::cout << "M8_FAKE_LOOPER_REMOVAL_MODEL=PASS\n"
                   << "M8_ANDROID_RAW_USERDATA_LIFETIME_VERIFIED=false\n"

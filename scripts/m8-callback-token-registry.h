@@ -2,6 +2,7 @@
 // Host-only registration token model. This does not integrate ALooper or JNI.
 // Dispatch resolves an ID under a mutex, never dereferencing a stale userdata pointer.
 #include "m8-native-callback-drain.h"
+#include <condition_variable>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -31,7 +32,7 @@ public:
         if (next_ == std::numeric_limits<Token>::max())
             throw std::overflow_error("callback token exhausted");
         Token id = ++next_;
-        registered_.emplace(id, std::move(context));
+        registered_.emplace(id, std::make_shared<Entry>(std::move(context)));
         return id;
     }
 
@@ -41,29 +42,51 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = registered_.find(id);
         if (it == registered_.end()) return {};
-        auto context = it->second;
+        auto entry = it->second;
+        if (entry->closing) return {};
+        auto context = entry->context;
         auto lease = context->drain.acquire();
         return {std::move(context), std::move(lease)};
     }
 
-    // Remove token first, then drain outside the registry mutex.
-    // Caller must also deregister the platform callback and ensure no
-    // native callback is still touching unowned userdata on teardown.
+    // A closing registration stays in the table until draining completes.
+    // Duplicate stop callers wait on the same completion barrier.
+    // Caller must separately deregister its platform callback and guarantee
+    // raw platform userdata cannot be accessed after it is freed.
     void unregisterAndDrain(Token id) {
-        std::shared_ptr<Context> context;
+        std::shared_ptr<Entry> entry;
+        {
+            std::unique_lock<std::mutex> lock(mutex_);
+            auto it = registered_.find(id);
+            if (it == registered_.end()) return; // already fully drained
+            entry = it->second;
+            if (entry->closing) {
+                entry->finished.wait(lock, [&] { return entry->drained; });
+                return;
+            }
+            entry->closing = true; // blocks new admission before drain
+        }
+        // Must not hold registry mutex while waiting for outstanding leases.
+        entry->context->drain.shutdownAndDrain();
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            auto it = registered_.find(id);
-            if (it == registered_.end()) return;
-            context = std::move(it->second);
-            registered_.erase(it);
+            entry->drained = true;
+            registered_.erase(id);
         }
-        context->drain.shutdownAndDrain();
+        entry->finished.notify_all();
     }
 
 private:
+    struct Entry final {
+        explicit Entry(std::shared_ptr<Context> value)
+            : context(std::move(value)) {}
+        std::shared_ptr<Context> context;
+        bool closing = false;
+        bool drained = false;
+        std::condition_variable finished;
+    };
     std::mutex mutex_;
     Token next_ = 0;
-    std::unordered_map<Token, std::shared_ptr<Context>> registered_;
+    std::unordered_map<Token, std::shared_ptr<Entry>> registered_;
 };
 } // namespace anvildesk_m8

@@ -82,10 +82,58 @@ static void verifyConcurrentCallbackAdmission() {
     check(drained, "concurrent callbacks did not drain");
 }
 
+// Shutdown must remain closed when it starts with no active callbacks.
+static void verifyEmptyGateShutdown() {
+    CallbackDrain gate;
+    gate.shutdownAndDrain();
+    check(gate.stopping(), "empty gate did not enter stopping");
+    check(gate.acquire() == nullptr, "empty gate reopened after shutdown");
+    gate.shutdownAndDrain();
+}
+
+// Multiple shutdown callers must all wait for the last callback lease.
+static void verifyConcurrentShutdownCallers() {
+    CallbackDrain gate;
+    auto lease = gate.acquire();
+    check(lease != nullptr, "initial lease rejected");
+    constexpr int count = 8;
+    std::atomic<int> finished{0};
+    std::vector<std::thread> closers;
+    closers.reserve(count);
+    for (int i = 0; i < count; ++i) {
+        closers.emplace_back([&] {
+            gate.shutdownAndDrain();
+            ++finished;
+        });
+    }
+    while (!gate.stopping()) std::this_thread::yield();
+    check(gate.acquire() == nullptr, "new lease acquired during concurrent stop");
+    check(finished.load() == 0, "shutdown completed with a live lease");
+    lease.reset();
+    for (auto& closer : closers) closer.join();
+    check(finished.load() == count, "not every shutdown caller completed");
+    check(gate.acquire() == nullptr, "gate reopened after concurrent stop");
+}
+
+// A new gate must not inherit the stopped state of a prior, drained gate.
+static void verifyIndependentGateLifecycles() {
+    for (int i = 0; i < 64; ++i) {
+        CallbackDrain gate;
+        auto lease = gate.acquire();
+        check(lease != nullptr, "fresh gate unexpectedly closed");
+        lease.reset();
+        gate.shutdownAndDrain();
+        check(gate.acquire() == nullptr, "drained gate unexpectedly reopened");
+    }
+}
+
 int main() {
     try {
         verifyOneShotShutdown();
         verifyConcurrentCallbackAdmission();
+        verifyEmptyGateShutdown();
+        verifyConcurrentShutdownCallers();
+        verifyIndependentGateLifecycles();
         std::cout << "M8_NATIVE_CALLBACK_DRAIN_SYNTHETIC_TEST=PASS\n";
         std::cout << "M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false\n";
         std::cout << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

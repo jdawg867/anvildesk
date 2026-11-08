@@ -89,6 +89,18 @@ jobs:
             app/src/main/AndroidManifest.xml \
             app/src/main/java/io/github/jdawg867/anvildesk/m8/M8X11ProcessService.java
 
+      - name: Verify standalone M8 native callback drain (native load remains disabled)
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O2 -Wall -Wextra -Werror \
+            scripts/test_m8_native_callback_drain.cpp \
+            -o /tmp/m8-test-native-callback-drain
+          timeout 20s /tmp/m8-test-native-callback-drain | tee m8-native-callback-drain-test.txt
+          grep -Fx 'M8_NATIVE_CALLBACK_DRAIN_SYNTHETIC_TEST=PASS' m8-native-callback-drain-test.txt
+          grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-native-callback-drain-test.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-native-callback-drain-test.txt
+
       - name: Unit tests
         run: gradle --no-daemon :core:runtime:testDebugUnitTest :app:testDebugUnitTest
 

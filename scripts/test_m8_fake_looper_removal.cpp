@@ -1,11 +1,14 @@
 // Deterministic host simulation of Android ALooper removal semantics.
 // No Android looper calls, JNI, production X11 library loading or device access.
 #include "m8-callback-token-registry.h"
+#include <chrono>
 #include <cstdint>
+#include <future>
 #include <functional>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 
@@ -128,6 +131,44 @@ static void testDuplicateFdCannotReplaceCallback() {
     registry.unregisterAndDrain(second);
 }
 
+// End-to-end host ordering test: deregister before draining, reject a
+// callback captured before removal, and retain context until an active
+// callback releases its lease. This still does not model raw NDK userdata.
+static void testRemoveThenDrainWithInflightAndQueuedCallback() {
+    CallbackTokenRegistry registry;
+    FakeLooper looper;
+    auto context = std::make_shared<CallbackTokenRegistry::Context>();
+    std::weak_ptr<CallbackTokenRegistry::Context> weak = context;
+    const auto token = registry.registerContext(context);
+    looper.add(45, callbackFor(registry, token));
+    auto queued = looper.snapshot(45);
+    auto active = registry.enter(token);
+    require(bool(active), "inflight callback lease missing");
+    context.reset();
+    require(looper.remove(45) == FakeLooper::RemoveResult::Removed,
+            "could not deregister before drain");
+
+    std::promise<void> drained;
+    auto future = drained.get_future();
+    std::thread shutdown([&] {
+        registry.unregisterAndDrain(token);
+        drained.set_value();
+    });
+    // Rejection establishes that the closing state is visible, without
+    // guessing whether shutdown thread has been scheduled yet.
+    while (registry.enter(token)) std::this_thread::yield();
+    const bool waitedForInflight =
+        future.wait_for(std::chrono::milliseconds(20)) == std::future_status::timeout;
+    const bool staleRejected = !queued();
+    const bool contextRetained = !weak.expired();
+    active = {};
+    shutdown.join();
+    require(waitedForInflight, "drain finished while callback was active");
+    require(staleRejected, "queued callback admitted after shutdown");
+    require(contextRetained, "inflight callback context freed too soon");
+    require(weak.expired(), "context survived completed removal and drain");
+}
+
 static void testUnknownDescriptorRemoval() {
     FakeLooper looper;
     require(looper.remove(100) == FakeLooper::RemoveResult::NotRegistered,
@@ -140,6 +181,7 @@ int main() {
         testDescriptorReuseAndGenerations();
         testRemovalErrorRetainsOwnershipUntilRetry();
         testDuplicateFdCannotReplaceCallback();
+        testRemoveThenDrainWithInflightAndQueuedCallback();
         testUnknownDescriptorRemoval();
         std::cout << "M8_FAKE_LOOPER_REMOVAL_MODEL=PASS\n"
                   << "M8_ANDROID_RAW_USERDATA_LIFETIME_VERIFIED=false\n"

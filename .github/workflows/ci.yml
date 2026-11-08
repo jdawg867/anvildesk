@@ -172,6 +172,22 @@ jobs:
           grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-fake-looper-removal-test.txt
           grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-fake-looper-removal-test.txt
 
+      - name: Cross-compile isolated M8 Android NDK looper ownership adapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/27.2.12479018"
+          clang="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++"
+          test -x "$clang"
+          "$clang" --target=aarch64-linux-android26 -std=c++17 \
+            -Wall -Wextra -Werror -fsyntax-only \
+            scripts/m8-android-looper-ndk-compile.cpp
+          grep -Fq 'No callback registration, JNI loading or production integration.' \
+            scripts/m8-android-looper-ndk-compile.cpp
+          echo 'M8_NDK_LOOPER_HEADER_COMPILE=PASS'
+          echo 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
       - name: Verify M8 renderer looper disconnect and lifecycle guards
         shell: bash
         run: |

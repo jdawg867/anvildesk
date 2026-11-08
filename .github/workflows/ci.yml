@@ -136,6 +136,24 @@ jobs:
           grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-callback-registration-lifetime.txt
           grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-callback-registration-lifetime.txt
 
+      - name: Sanitize host-only M8 callback token registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Wall -Wextra -Werror \
+            scripts/test_m8_callback_token_registry.cpp \
+            -o /tmp/m8-test-callback-token-registry
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 30s /tmp/m8-test-callback-token-registry \
+            | tee m8-callback-token-registry-test.txt
+          grep -Fx 'M8_CALLBACK_TOKEN_REGISTRY_HOST_MODEL=PASS' m8-callback-token-registry-test.txt
+          grep -Fx 'M8_ANDROID_USERDATA_TOKEN_ENCODING_VERIFIED=false' m8-callback-token-registry-test.txt
+          grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-callback-token-registry-test.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-callback-token-registry-test.txt
+
       - name: Verify M8 renderer looper disconnect and lifecycle guards
         shell: bash
         run: |

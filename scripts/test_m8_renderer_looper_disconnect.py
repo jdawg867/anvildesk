@@ -21,7 +21,7 @@ class RendererLooperDisconnectPatchTests(unittest.TestCase):
         # Structural regression: a queued callback for an old descriptor
         # must return before touching the new connection or renderer.
         callback = mod.patch(mod.OLD)
-        guard = callback.index("if (fd != connFd)\\n        return 0;")
+        guard = callback.index("if (fd != connFd)\n        return 0;")
         side_effects = (
             "ALooper_removeFd(",
             "close(connFd);",

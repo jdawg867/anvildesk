@@ -56,6 +56,42 @@ static void testUnregisterWaitsForActiveLease() {
     check(!registry.enter(token), "closed token was admitted again");
 }
 
+static void testDuplicateUnregisterWaitsForDrain() {
+    CallbackTokenRegistry registry;
+    auto context = std::make_shared<CallbackTokenRegistry::Context>();
+    const auto token = registry.registerContext(context);
+    auto active = registry.enter(token);
+    check(bool(active), "initial lease unavailable");
+    std::promise<void> firstFinished;
+    std::promise<void> secondFinished;
+    auto firstResult = firstFinished.get_future();
+    auto secondResult = secondFinished.get_future();
+    std::thread first([&] {
+        registry.unregisterAndDrain(token);
+        firstFinished.set_value();
+    });
+    // The first unregistration has marked the entry as closing.
+    while (registry.enter(token)) std::this_thread::yield();
+    std::promise<void> secondStarted;
+    auto secondStart = secondStarted.get_future();
+    std::thread second([&] {
+        secondStarted.set_value();
+        registry.unregisterAndDrain(token);
+        secondFinished.set_value();
+    });
+    secondStart.wait();
+    const bool firstBlocked =
+        firstResult.wait_for(20ms) == std::future_status::timeout;
+    const bool secondBlocked =
+        secondResult.wait_for(20ms) == std::future_status::timeout;
+    active = {};
+    first.join();
+    second.join();
+    check(firstBlocked, "first stop completed with a live lease");
+    check(secondBlocked, "duplicate stop returned before drain");
+    check(!registry.enter(token), "retired token accepted after stops");
+}
+
 static void testConcurrentAdmissionAndCancellation() {
     CallbackTokenRegistry registry;
     for (int round = 0; round < 64; ++round) {
@@ -79,6 +115,7 @@ int main() {
     try {
         testStaleTokenAndReconnect();
         testUnregisterWaitsForActiveLease();
+        testDuplicateUnregisterWaitsForDrain();
         testConcurrentAdmissionAndCancellation();
         std::cout << "M8_CALLBACK_TOKEN_REGISTRY_HOST_MODEL=PASS\n"
                   << "M8_ANDROID_USERDATA_TOKEN_ENCODING_VERIFIED=false\n"

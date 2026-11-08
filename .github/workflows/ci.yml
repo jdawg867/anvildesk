@@ -182,8 +182,11 @@ jobs:
           "$clang" --target=aarch64-linux-android26 -std=c++17 \
             -Wall -Wextra -Werror -fsyntax-only \
             scripts/m8-android-looper-ndk-compile.cpp
-          grep -Fq 'No callback registration, JNI loading or production integration.' \
+          grep -Fq 'No runtime registration, JNI loading or production integration.' \
             scripts/m8-android-looper-ndk-compile.cpp
+          grep -Fq 'AddStatus add(int fd, int events, ALooper_callbackFunc callback,' \
+            scripts/m8-android-looper-ndk-compile.cpp
+          echo 'M8_NDK_LOOPER_REGISTRATION_SIGNATURE=PASS'
           echo 'M8_NDK_LOOPER_HEADER_COMPILE=PASS'
           echo 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false'
           echo 'M8_NATIVE_LOAD_AUTHORIZED=false'

@@ -18,6 +18,7 @@ struct ALooper {
     bool registered = false;
     std::atomic<bool> failRemove{false};
     std::atomic<int> references{0};
+    std::promise<void> removalSucceeded; // signals completed deregistration
     int fd = -1;
     ALooper_callbackFunc callback = nullptr;
     void* userdata = nullptr;
@@ -51,6 +52,7 @@ int ALooper_removeFd(ALooper* ptr, int fd) {
     if (!ptr->registered || ptr->fd != fd) return 0;
     ptr->registered = false;
     ptr->pending = false;
+    ptr->removalSucceeded.set_value();
     return 1;
 }
 int ALooper_pollOnce(int, int*, int*, void**) {
@@ -112,12 +114,17 @@ static void testWakeJoinAndRemoveRetry() {
     require(!owner.registerCallback(51, ALOOPER_EVENT_INPUT, heldCallback, &userdata),
             "failed removal reopened registration");
     platform.failRemove.store(false);
+    auto deregistered = platform.removalSucceeded.get_future();
     std::atomic<bool> completed{false};
     std::thread shutdown([&] { completed = owner.shutdownAndJoin(); });
-    // The running callback remains blocked, so joining cannot finish yet.
+    // Wait for REAL proof that the retry deregistered the FD, not merely
+    // for the shutdown thread to be scheduled. The callback is still blocked.
+    deregistered.wait();
     const bool waited = !completed.load();
+    const bool stillHeld = platform.references.load() == 1;
     releaseSignal.set_value();
     shutdown.join();
+    require(stillHeld, "looper reference released before callback completed");
     require(waited, "join completed while active callback still blocked");
     require(completed, "retry did not join worker");
     require(calls == 1, "callback delivery count incorrect");

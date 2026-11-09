@@ -300,15 +300,24 @@ jobs:
           ndk="$ANDROID_HOME/ndk/27.2.12479018"
           bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
           test -x "$bin/clang++"
+          # ADB /data/local/tmp has no bundled libc++_shared.so. Link the
+          # C++ runtime statically so the executable remains standalone.
           "$bin/clang++" --target=aarch64-linux-android26 \
-            -std=c++17 -pthread -O1 -Wall -Wextra -Werror \
+            -std=c++17 -pthread -static-libstdc++ -O1 -Wall -Wextra -Werror \
             -Wl,--no-undefined \
             scripts/m8-android-owned-looper-device-probe.cpp \
             -landroid -o /tmp/m8-android-owned-looper-device-probe
           "$bin/llvm-readelf" -h /tmp/m8-android-owned-looper-device-probe \
             | grep -Eq 'Machine:.*AArch64'
           "$bin/llvm-readelf" -d /tmp/m8-android-owned-looper-device-probe \
-            | grep -Fq 'libandroid.so'
+            | tee /tmp/m8-owned-looper-dependencies.txt
+          grep -Fq 'libandroid.so' /tmp/m8-owned-looper-dependencies.txt
+          if grep -Eq 'libc\\+\\+_shared\\.so|libstdc\\+\\+\\.so|GLIBC_' \
+               /tmp/m8-owned-looper-dependencies.txt; then
+            echo 'STOP: Android probe depends on a non-bundled C++ runtime' >&2
+            exit 1
+          fi
+          echo 'M8_ANDROID_DEVICE_PROBE_STANDALONE_CPP_RUNTIME=PASS'
           echo 'M8_ANDROID_DEVICE_PROBE_BUILD=PASS'
           echo 'M8_ANDROID_DEVICE_PROBE_EXECUTED=false'
           echo 'M8_NATIVE_LOAD_AUTHORIZED=false'

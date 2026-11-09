@@ -82,7 +82,7 @@ private:
 };
 
 // Single-registration compile-only composition of actual NDK removal and the
-// host teardown gate. Owner serializes calls; lifetime is NOT Android-safe.
+// host teardown gate. State transitions are serialized, but lifetime is NOT Android-safe.
 class SingleFdShutdownCoordinator final {
 public:
     SingleFdShutdownCoordinator(RetainedLooper& looper, int fd)
@@ -92,6 +92,7 @@ public:
 
     // Close admission before attempting to remove the registered FD.
     bool beginShutdown() {
+        std::lock_guard<std::mutex> lock(mutex_);
         if (fd_ < 0 || gate_.state() != LooperTeardownGate::State::Active)
             return false;
         looper_.beginShutdown();
@@ -99,11 +100,15 @@ public:
     }
 
     // Explicitly retry after a removal error; it must not reopen admission.
-    bool retryRemoval() { return gate_.retryRemoval(); }
+    bool retryRemoval() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return gate_.retryRemoval();
+    }
 
     // A descriptor absent from this adapter's tracking is not an NDK
     // removal success. Treat it as error rather than granting drain phase.
     bool removeRegisteredFd() {
+        std::lock_guard<std::mutex> lock(mutex_);
         if (gate_.state() != LooperTeardownGate::State::RemovalPending)
             return false;
         const auto status = looper_.remove(fd_);
@@ -126,16 +131,24 @@ public:
 
     // This can be called ONLY after the separate callback-drain implementation
     // confirms completion. This wrapper does not perform that drain.
-    bool reportExternallyVerifiedHostDrain() { return gate_.reportHostDrain(); }
+    bool reportExternallyVerifiedHostDrain() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return gate_.reportHostDrain();
+    }
 
-    LooperTeardownGate::State state() const { return gate_.state(); }
+    LooperTeardownGate::State state() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return gate_.state();
+    }
     bool canReleaseNativeResources() const {
+        std::lock_guard<std::mutex> lock(mutex_);
         return gate_.canReleaseNativeResources(); // always false
     }
 
 private:
     RetainedLooper& looper_;
     const int fd_;
+    mutable std::mutex mutex_;
     LooperTeardownGate gate_;
 };
 
@@ -162,5 +175,6 @@ static_assert(std::is_same_v<decltype(
 // callbacks arriving after removal, or coordination with other looper users.
 // Outstanding tracked FDs are a fatal programming error at destruction;
 // even zero tracked FDs does NOT prove callbacks are quiescent.
-// The coordinator is intentionally single-FD, externally serialized and
-// requires caller-provided host-drain evidence; it cannot free native state.
+// The coordinator is intentionally single-FD; its methods serialize state
+// transitions, but the owner must join callers before destruction. It still
+// requires caller-provided host-drain evidence and cannot free native state.

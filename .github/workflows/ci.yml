@@ -190,6 +190,26 @@ jobs:
           grep -Fx 'M8_NATIVE_RESOURCE_RELEASE_AUTHORIZED=false' m8-looper-teardown-gate-test.txt
           grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-looper-teardown-gate-test.txt
 
+      - name: Sanitize concurrent M8 NDK coordinator with isolated host looper shim
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Compile the ACTUAL adapter against a host-only test shim.
+          # Real Android NDK headers are verified in the following step.
+          c++ -std=c++17 -pthread -D__ANDROID__ \
+            -Iscripts/m8-test-shim -O1 -g -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Wall -Wextra -Werror \
+            scripts/test_m8_ndk_coordinator_concurrency.cpp \
+            -o /tmp/m8-test-ndk-coordinator-host
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 30s /tmp/m8-test-ndk-coordinator-host \
+            | tee m8-ndk-coordinator-host-test.txt
+          grep -Fx 'M8_NDK_COORDINATOR_HOST_CONCURRENCY=PASS' m8-ndk-coordinator-host-test.txt
+          grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-ndk-coordinator-host-test.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-ndk-coordinator-host-test.txt
+
       - name: Cross-compile isolated M8 Android NDK looper ownership adapter
         shell: bash
         run: |

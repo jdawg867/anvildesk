@@ -11,14 +11,21 @@ BINARY="m8-android-owned-looper-device-probe"
 EXPECTED_ARTIFACT_ID="13716750305"
 EXPECTED_ARTIFACT_DIGEST="sha256:da3f0141f60c49d8d11ce475c3f84aee06675d207ebcd49c208a7db0ce89ed2c"
 
-for tool in gh adb readelf mktemp timeout; do
-  command -v "$tool" >/dev/null || { echo "STOP: missing $tool" >&2; exit 1; }
-done
-
-[[ "${1:-}" == "--run-on-device" && "$#" -eq 1 ]] || {
-  echo "This test must be explicitly requested: $0 --run-on-device" >&2
+# Artifact verification is read-only and needs no connected Android device.
+# Running code on a phone is a separate explicit opt-in operation.
+[[ "$#" -eq 1 ]] && [[ "$1" == "--verify-artifact" || "$1" == "--run-on-device" ]] || {
+  echo "Usage: $0 --verify-artifact | --run-on-device" >&2
   exit 2
 }
+mode="$1"
+for tool in gh readelf mktemp; do
+  command -v "$tool" >/dev/null || { echo "STOP: missing $tool" >&2; exit 1; }
+done
+if [[ "$mode" == "--run-on-device" ]]; then
+  for tool in adb timeout; do
+    command -v "$tool" >/dev/null || { echo "STOP: missing $tool" >&2; exit 1; }
+  done
+fi
 
 run_sha="$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.head_sha')"
 [[ "$run_sha" == "$EXPECTED_SHA" ]] || {
@@ -43,31 +50,10 @@ expected_metadata="$(printf '%s\t%s\tfalse\t%s' \
   exit 1
 }
 
-mapfile -t devices < <(adb devices | awk '$2=="device" {print $1}')
-[[ "${#devices[@]}" -eq 1 ]] || {
-  echo "STOP: exactly one authorized online ADB device is required" >&2
-  exit 1
-}
-serial="${devices[0]}"
-model="$(adb -s "$serial" shell getprop ro.product.model | tr -d '\r')"
-[[ "$model" == "SM-G766U" ]] || {
-  echo "STOP: refusing to execute on unexpected device model: $model" >&2
-  exit 1
-}
-abi="$(adb -s "$serial" shell getprop ro.product.cpu.abi | tr -d '\r')"
-[[ "$abi" == "arm64-v8a" ]] || {
-  echo "STOP: expected arm64-v8a, got $abi" >&2
-  exit 1
-}
-adb -s "$serial" shell 'command -v timeout >/dev/null' || {
-  echo "STOP: Android device lacks timeout; cannot ensure bounded execution" >&2
-  exit 1
-}
-
 tmp="$(mktemp -d)"
 remote=""
 cleanup() {
-  if [[ -n "$remote" ]]; then
+  if [[ -n "$remote" && -n "${serial:-}" ]]; then
     adb -s "$serial" shell "rm -f '$remote'" >/dev/null 2>&1 || true
   fi
   rm -rf -- "$tmp"
@@ -104,6 +90,33 @@ if grep -Eq 'libc\\+\\+_shared\\.so|libstdc\\+\\+\\.so|GLIBC_' \
   echo "STOP: executable depends on unbundled/non-Android C++ runtime" >&2
   exit 1
 fi
+echo "M8_ARTIFACT_ONLY_PREFLIGHT=PASS"
+if [[ "$mode" == "--verify-artifact" ]]; then
+  echo "M8_ANDROID_DEVICE_PROBE_EXECUTED=false"
+  exit 0
+fi
+
+mapfile -t devices < <(adb devices | awk '$2=="device" {print $1}')
+[[ "${#devices[@]}" -eq 1 ]] || {
+  echo "STOP: exactly one authorized online ADB device is required" >&2
+  exit 1
+}
+serial="${devices[0]}"
+model="$(adb -s "$serial" shell getprop ro.product.model | tr -d '\r')"
+[[ "$model" == "SM-G766U" ]] || {
+  echo "STOP: refusing to execute on unexpected device model: $model" >&2
+  exit 1
+}
+abi="$(adb -s "$serial" shell getprop ro.product.cpu.abi | tr -d '\r')"
+[[ "$abi" == "arm64-v8a" ]] || {
+  echo "STOP: expected arm64-v8a, got $abi" >&2
+  exit 1
+}
+adb -s "$serial" shell 'command -v timeout >/dev/null' || {
+  echo "STOP: Android device lacks timeout; cannot ensure bounded execution" >&2
+  exit 1
+}
+
 # Local non-privileged, fixed-duration native process. Unique path and
 # cleanup ensure no changes to the installed app or Ubuntu rootfs.
 remote="/data/local/tmp/anvildesk-m8-looper-probe-${RUN_ID}-$$"

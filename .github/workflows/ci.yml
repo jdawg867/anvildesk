@@ -294,6 +294,9 @@ jobs:
           grep -Fq 'EXPECTED_ARTIFACT_DIGEST="sha256:da3f0141f60c49d8d11ce475c3f84aee06675d207ebcd49c208a7db0ce89ed2c"' scripts/run-m8-owned-looper-device-probe.sh
           grep -Fq "readelf -l" scripts/run-m8-owned-looper-device-probe.sh
           grep -Fq 'libandroid.so' scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq -- '--verify-artifact' scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq 'M8_ARTIFACT_ONLY_PREFLIGHT=PASS' scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq 'M8_ANDROID_DEVICE_PROBE_EXECUTED=false' scripts/run-m8-owned-looper-device-probe.sh
           grep -Fq -- '--run-on-device' scripts/run-m8-owned-looper-device-probe.sh
           echo 'M8_SAMSUNG_PROBE_RUNNER_SYNTAX=PASS'
           echo 'M8_ANDROID_DEVICE_PROBE_EXECUTED=false'

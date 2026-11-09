@@ -273,9 +273,11 @@ static void testWorkerCallbackCannotShutdownAndJoinItself() {
     int userdata = 29;
     std::atomic<bool> rejected{false};
     std::atomic<int> callbacks{0};
+    std::promise<void> callbackStarted;
     HostDispatchOwner* dispatcher = nullptr;
     HostDispatchOwner owner(&userdata, [&](void* raw) {
         check(*static_cast<int*>(raw) == 29, "invalid callback userdata");
+        callbackStarted.set_value();
         try {
             dispatcher->shutdownAndJoin();
         } catch (const std::logic_error&) {
@@ -285,6 +287,7 @@ static void testWorkerCallbackCannotShutdownAndJoinItself() {
     });
     dispatcher = &owner;
     check(owner.queueCallback(), "self-join callback not queued");
+    callbackStarted.get_future().wait();
     // A safe outside caller must remain able to perform the real join.
     owner.shutdownAndJoin();
     check(callbacks == 1, "callback did not complete after self-join rejection");

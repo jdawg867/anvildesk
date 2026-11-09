@@ -262,6 +262,28 @@ jobs:
           echo 'M8_ANDROID_CALLBACK_THREAD_RUNTIME_VERIFIED=false'
           echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
 
+      - name: Link isolated owned-looper ARM64 probe with real Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/27.2.12479018"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$bin/clang++"
+          "$bin/clang++" --target=aarch64-linux-android26 -std=c++17 \
+            -fPIC -shared -pthread -O0 -Wall -Wextra -Werror \
+            -Wl,--no-undefined \
+            scripts/m8-android-owned-looper-link-probe.cpp \
+            -landroid -o /tmp/m8-owned-looper-link-probe.so
+          "$bin/llvm-readelf" -h /tmp/m8-owned-looper-link-probe.so \
+            | grep -Eq 'Machine:.*AArch64'
+          "$bin/llvm-readelf" -d /tmp/m8-owned-looper-link-probe.so \
+            | grep -Fq 'libandroid.so'
+          "$bin/llvm-nm" -D --defined-only /tmp/m8-owned-looper-link-probe.so \
+            | grep -Fq 'anvildesk_m8_owned_looper_link_probe'
+          echo 'M8_OWNED_LOOPER_ARM64_LINK=PASS'
+          echo 'M8_ANDROID_CALLBACK_THREAD_RUNTIME_VERIFIED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
       - name: Link isolated ARM64 Android looper probe against libandroid
         shell: bash
         run: |

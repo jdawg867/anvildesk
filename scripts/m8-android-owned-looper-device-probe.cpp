@@ -59,14 +59,6 @@ int runProbe() {
                     allowExit.set_value();
                     if (!looper.shutdownAndJoin()) result = 16;
                 } else {
-                    std::promise<void> shutdownDone;
-                    auto done = shutdownDone.get_future();
-                    std::thread shutdown([&] {
-                        shutdownDone.set_value_at_thread_exit();
-                        // Store the shutdown status separately from this
-                        // completion signal, preserving ordering.
-                    });
-                    shutdown.join();
                     // The actual join request is performed on a separate
                     // thread while the callback remains blocked.
                     std::atomic<bool> joined{false};

@@ -12,6 +12,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 using anvildesk_m8::CallbackTokenRegistry;
 
@@ -112,14 +113,24 @@ public:
         return true;
     }
 
-    // Single external shutdown caller; never invoked from worker callback.
+    bool admissionClosed() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return stopping_;
+    }
+
+    // Multiple external callers may race to stop the worker. Serialize
+    // joining so every caller returns only after the same worker has exited.
+    // Never invoke this from a worker callback (self-join is forbidden).
     void shutdownAndJoin() {
+        std::lock_guard<std::mutex> joinLock(joinMutex_);
+        if (joined_) return;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             stopping_ = true;
         }
         ready_.notify_one();
         worker_.join();
+        joined_ = true;
     }
 
 private:
@@ -141,6 +152,8 @@ private:
     bool stopping_ = false;
     unsigned pending_ = 0;
     std::thread worker_;
+    std::mutex joinMutex_; // serializes competing joins, never held by worker
+    bool joined_ = false; // guarded by joinMutex_
 };
 
 static void testHostDispatcherJoinPrecedesRawUserdataRelease() {
@@ -183,10 +196,46 @@ static void testHostDispatcherJoinPrecedesRawUserdataRelease() {
     check(weak.expired(), "userdata retained beyond completed join");
 }
 
+static void testConcurrentShutdownJoinersWaitForActiveCallback() {
+    std::promise<void> callbackEntered;
+    std::promise<void> releaseCallback;
+    const auto release = releaseCallback.get_future().share();
+    std::atomic<int> callbacks{0};
+    std::atomic<int> finishedJoiners{0};
+    int userdata = 19;
+    HostDispatchOwner owner(&userdata, [&](void* raw) {
+        callbackEntered.set_value();
+        release.wait();
+        if (*static_cast<int*>(raw) == 19) ++callbacks;
+    });
+    check(owner.queueCallback(), "initial callback rejected");
+    callbackEntered.get_future().wait();
+
+    std::vector<std::thread> joiners;
+    for (int i = 0; i < 8; ++i) {
+        joiners.emplace_back([&] {
+            owner.shutdownAndJoin();
+            ++finishedJoiners;
+        });
+    }
+    // Wait for the first shutdown to close admission. It cannot join until
+    // the blocked callback finishes, and the other callers must not return.
+    while (!owner.admissionClosed()) std::this_thread::yield();
+    const bool allWaiting = finishedJoiners.load() == 0;
+    releaseCallback.set_value();
+    for (auto& thread : joiners) thread.join();
+    check(allWaiting, "shutdown caller returned before worker exited");
+    check(finishedJoiners == 8, "not all competing shutdowns joined");
+    check(callbacks == 1, "running callback count incorrect");
+    owner.shutdownAndJoin(); // completed shutdown is idempotent
+    check(!owner.queueCallback(), "post-shutdown callback admitted");
+}
+
 int main() {
     testQueuedCallbackSurvivesRemovalAndDrain();
     testRunningCallbackKeepsResourceAliveDuringShutdown();
     testHostDispatcherJoinPrecedesRawUserdataRelease();
+    testConcurrentShutdownJoinersWaitForActiveCallback();
     std::cout << "M8_RAW_USERDATA_HOST_DISPATCH_ORDER=PASS\n"
               << "M8_ANDROID_DISPATCH_THREAD_JOIN_VERIFIED=false\n"
               << "M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false\n"

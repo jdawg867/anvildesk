@@ -287,7 +287,8 @@ jobs:
         run: |
           set -euo pipefail
           bash -n scripts/run-m8-owned-looper-device-probe.sh
-          grep -Fq 'EXPECTED_SHA="fcdcddba50e559585c1d95f2cc24dd3cf7bcf7a1"' scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq 'RUN_ID="42711544114"' scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq 'EXPECTED_SHA="871264cc1872d980b5e59f5ab71ac1a70bf7b9a5"' scripts/run-m8-owned-looper-device-probe.sh
           grep -Fq '[[ "$model" == "SM-G766U" ]]' scripts/run-m8-owned-looper-device-probe.sh
           grep -Fq -- '--run-on-device' scripts/run-m8-owned-looper-device-probe.sh
           echo 'M8_SAMSUNG_PROBE_RUNNER_SYNTAX=PASS'

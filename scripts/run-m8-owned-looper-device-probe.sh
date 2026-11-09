@@ -35,6 +35,11 @@ mapfile -t devices < <(adb devices | awk '$2=="device" {print $1}')
   exit 1
 }
 serial="${devices[0]}"
+model="$(adb -s "$serial" shell getprop ro.product.model | tr -d '\r')"
+[[ "$model" == "SM-G766U" ]] || {
+  echo "STOP: refusing to execute on unexpected device model: $model" >&2
+  exit 1
+}
 abi="$(adb -s "$serial" shell getprop ro.product.cpu.abi | tr -d '\r')"
 [[ "$abi" == "arm64-v8a" ]] || {
   echo "STOP: expected arm64-v8a, got $abi" >&2

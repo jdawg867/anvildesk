@@ -8,6 +8,8 @@ RUN_ID="42711544114"
 EXPECTED_SHA="871264cc1872d980b5e59f5ab71ac1a70bf7b9a5"
 ARTIFACT="m8-owned-looper-device-probe-arm64"
 BINARY="m8-android-owned-looper-device-probe"
+EXPECTED_ARTIFACT_ID="13716750305"
+EXPECTED_ARTIFACT_DIGEST="sha256:da3f0141f60c49d8d11ce475c3f84aee06675d207ebcd49c208a7db0ce89ed2c"
 
 for tool in gh adb readelf mktemp timeout; do
   command -v "$tool" >/dev/null || { echo "STOP: missing $tool" >&2; exit 1; }
@@ -26,6 +28,18 @@ run_sha="$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.head_sha')"
 run_status="$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.conclusion')"
 [[ "$run_status" == "success" ]] || {
   echo "STOP: pinned workflow did not pass" >&2
+  exit 1
+}
+
+# Require the exact non-expired GitHub Actions artifact. This checks the
+# provenance metadata; gh downloads over authenticated HTTPS. It does not
+# independently recompute the artifact ZIP digest after extraction.
+artifact_json="$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts" \
+  --jq ".artifacts[] | select(.name == \"$ARTIFACT\") | [.id, .digest, .expired, .workflow_run.head_sha] | @tsv")"
+expected_metadata="$(printf '%s\t%s\tfalse\t%s' \
+  "$EXPECTED_ARTIFACT_ID" "$EXPECTED_ARTIFACT_DIGEST" "$EXPECTED_SHA")"
+[[ "$artifact_json" == "$expected_metadata" ]] || {
+  echo "STOP: expected artifact missing, expired, or provenance mismatch" >&2
   exit 1
 }
 
@@ -70,6 +84,26 @@ readelf -h "$candidate" | grep -Eq 'Machine:.*AArch64' || {
   echo "STOP: downloaded executable is not AArch64" >&2
   exit 1
 }
+# The standalone NDK executable must use Android's 64-bit linker and
+# system libraries; a non-bundled C++ runtime must not be required.
+readelf -l "$candidate" | grep -Fq '/system/bin/linker64' || {
+  echo "STOP: executable does not use Android's 64-bit dynamic linker" >&2
+  exit 1
+}
+dependencies="$(readelf -d "$candidate")"
+grep -Fq 'libandroid.so' <<< "$dependencies" || {
+  echo "STOP: Android native looper dependency missing" >&2
+  exit 1
+}
+grep -Fq 'libc.so' <<< "$dependencies" || {
+  echo "STOP: Android libc dependency missing" >&2
+  exit 1
+}
+if grep -Eq 'libc\\+\\+_shared\\.so|libstdc\\+\\+\\.so|GLIBC_' \
+     <<< "$dependencies"; then
+  echo "STOP: executable depends on unbundled/non-Android C++ runtime" >&2
+  exit 1
+fi
 # Local non-privileged, fixed-duration native process. Unique path and
 # cleanup ensure no changes to the installed app or Ubuntu rootfs.
 remote="/data/local/tmp/anvildesk-m8-looper-probe-${RUN_ID}-$$"

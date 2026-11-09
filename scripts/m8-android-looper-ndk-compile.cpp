@@ -149,6 +149,11 @@ static_assert(std::is_same_v<decltype(ALooper_removeFd(
     static_cast<ALooper*>(nullptr), 1)), int>);
 static_assert(!std::is_copy_constructible_v<RetainedLooper>);
 static_assert(!std::is_move_constructible_v<RetainedLooper>);
+static_assert(!std::is_copy_constructible_v<SingleFdShutdownCoordinator>);
+static_assert(std::is_same_v<decltype(
+    std::declval<SingleFdShutdownCoordinator&>().removeRegisteredFd()), bool>);
+static_assert(std::is_same_v<decltype(
+    std::declval<const SingleFdShutdownCoordinator&>().canReleaseNativeResources()), bool>);
 
 } // namespace anvildesk_m8
 

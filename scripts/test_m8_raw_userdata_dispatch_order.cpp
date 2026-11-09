@@ -127,6 +127,7 @@ public:
         {
             std::lock_guard<std::mutex> lock(mutex_);
             stopping_ = true;
+            pending_ = 0; // cancel callbacks not yet dispatched
         }
         ready_.notify_one();
         worker_.join();
@@ -138,7 +139,7 @@ private:
         for (;;) {
             std::unique_lock<std::mutex> lock(mutex_);
             ready_.wait(lock, [&] { return stopping_ || pending_ != 0; });
-            if (pending_ == 0 && stopping_) return;
+            if (stopping_) return; // no queued dispatch after shutdown
             --pending_;
             lock.unlock();
             callback_(userdata_);
@@ -231,11 +232,46 @@ static void testConcurrentShutdownJoinersWaitForActiveCallback() {
     check(!owner.queueCallback(), "post-shutdown callback admitted");
 }
 
+static void testShutdownDropsQueuedCallbacksButJoinsActive() {
+    std::promise<void> entered;
+    std::promise<void> unblock;
+    const auto release = unblock.get_future().share();
+    std::atomic<int> calls{0};
+    int userdata = 23;
+    HostDispatchOwner owner(&userdata, [&](void* raw) {
+        const int sequence = ++calls;
+        if (sequence == 1) {
+            entered.set_value();
+            release.wait();
+        }
+        check(*static_cast<int*>(raw) == 23, "callback used invalid userdata");
+    });
+    check(owner.queueCallback(), "active callback not queued");
+    entered.get_future().wait();
+    for (int i = 0; i < 8; ++i)
+        check(owner.queueCallback(), "pending callback not queued");
+    std::atomic<bool> joined{false};
+    std::thread shutdown([&] {
+        owner.shutdownAndJoin();
+        joined.store(true);
+    });
+    while (!owner.admissionClosed()) std::this_thread::yield();
+    const bool waited = !joined.load();
+    check(!owner.queueCallback(), "shutdown admitted fresh callback");
+    unblock.set_value();
+    shutdown.join();
+    check(waited, "joined while callback still running");
+    check(joined.load(), "shutdown join did not finish");
+    check(calls == 1, "queued callbacks executed during teardown");
+    owner.shutdownAndJoin(); // idempotent
+}
+
 int main() {
     testQueuedCallbackSurvivesRemovalAndDrain();
     testRunningCallbackKeepsResourceAliveDuringShutdown();
     testHostDispatcherJoinPrecedesRawUserdataRelease();
     testConcurrentShutdownJoinersWaitForActiveCallback();
+    testShutdownDropsQueuedCallbacksButJoinsActive();
     std::cout << "M8_RAW_USERDATA_HOST_DISPATCH_ORDER=PASS\n"
               << "M8_ANDROID_DISPATCH_THREAD_JOIN_VERIFIED=false\n"
               << "M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false\n"

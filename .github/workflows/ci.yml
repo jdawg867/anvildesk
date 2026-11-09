@@ -229,6 +229,27 @@ jobs:
           echo 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false'
           echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
 
+      - name: Link isolated ARM64 Android looper probe against libandroid
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/27.2.12479018"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$bin/clang++"
+          "$bin/clang++" --target=aarch64-linux-android26 -std=c++17 \
+            -fPIC -shared -O0 -Wall -Wextra -Werror \
+            -Wl,--no-undefined \
+            scripts/m8-android-looper-ndk-link-probe.cpp \
+            -landroid -o /tmp/m8-ndk-looper-link-probe.so
+          "$bin/llvm-readelf" -h /tmp/m8-ndk-looper-link-probe.so \
+            | grep -Eq 'Machine:.*AArch64'
+          "$bin/llvm-readelf" -d /tmp/m8-ndk-looper-link-probe.so \
+            | grep -Fq 'libandroid.so'
+          # No APK packaging, loading, or execution of this probe.
+          echo 'M8_NDK_LOOPER_ARM64_LINK=PASS'
+          echo 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
       - name: Verify M8 renderer looper disconnect and lifecycle guards
         shell: bash
         run: |

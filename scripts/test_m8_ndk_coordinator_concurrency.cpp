@@ -104,8 +104,8 @@ int main() {
     testConcurrentShutdownAndDrain();
     testRemovalErrorRetryWithoutReopening();
     // This uses a host stub with NO real looper callback delivery.
-    std::cout << "M8_NDK_COORDINATOR_HOST_CONCURRENCY=PASS\\n"
-              << "M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false\\n"
-              << "M8_NATIVE_LOAD_AUTHORIZED=false\\n";
+    std::cout << "M8_NDK_COORDINATOR_HOST_CONCURRENCY=PASS\n"
+              << "M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false\n"
+              << "M8_NATIVE_LOAD_AUTHORIZED=false\n";
     return 0;
 }

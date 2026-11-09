@@ -302,6 +302,14 @@ jobs:
           echo 'M8_ANDROID_DEVICE_PROBE_EXECUTED=false'
           echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
 
+      - name: Retain standalone M8 Android looper device test
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-owned-looper-device-probe-arm64
+          path: /tmp/m8-android-owned-looper-device-probe
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Link isolated owned-looper ARM64 probe with real Android NDK
         shell: bash
         run: |

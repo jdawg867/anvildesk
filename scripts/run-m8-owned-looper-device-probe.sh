@@ -4,8 +4,8 @@
 set -euo pipefail
 
 REPO="jdawg867/anvildesk"
-RUN_ID="42707334270"
-EXPECTED_SHA="fcdcddba50e559585c1d95f2cc24dd3cf7bcf7a1"
+RUN_ID="42711544114"
+EXPECTED_SHA="871264cc1872d980b5e59f5ab71ac1a70bf7b9a5"
 ARTIFACT="m8-owned-looper-device-probe-arm64"
 BINARY="m8-android-owned-looper-device-probe"
 

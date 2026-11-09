@@ -247,6 +247,21 @@ jobs:
           echo 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false'
           echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
 
+      - name: Cross-compile dedicated M8 Android looper-thread shutdown prototype
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/27.2.12479018"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$bin/clang++"
+          "$bin/clang++" --target=aarch64-linux-android26 \
+            -std=c++17 -pthread -Wall -Wextra -Werror -fsyntax-only \
+            scripts/m8-android-owned-looper-thread.cpp
+          # This probe is NOT linked into the Android app or launched.
+          echo 'M8_ANDROID_OWNED_LOOPER_THREAD_COMPILE=PASS'
+          echo 'M8_ANDROID_CALLBACK_THREAD_RUNTIME_VERIFIED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
       - name: Link isolated ARM64 Android looper probe against libandroid
         shell: bash
         run: |

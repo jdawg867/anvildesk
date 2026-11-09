@@ -172,6 +172,24 @@ jobs:
           grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-fake-looper-removal-test.txt
           grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-fake-looper-removal-test.txt
 
+      - name: Sanitize M8 looper teardown phase gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Wall -Wextra -Werror \
+            scripts/test_m8_looper_teardown_gate.cpp \
+            -o /tmp/m8-test-looper-teardown-gate
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 30s /tmp/m8-test-looper-teardown-gate \
+            | tee m8-looper-teardown-gate-test.txt
+          grep -Fx 'M8_LOOPER_TEARDOWN_GATE_HOST_MODEL=PASS' m8-looper-teardown-gate-test.txt
+          grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-looper-teardown-gate-test.txt
+          grep -Fx 'M8_NATIVE_RESOURCE_RELEASE_AUTHORIZED=false' m8-looper-teardown-gate-test.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-looper-teardown-gate-test.txt
+
       - name: Cross-compile isolated M8 Android NDK looper ownership adapter
         shell: bash
         run: |

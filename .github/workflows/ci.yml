@@ -282,6 +282,17 @@ jobs:
           echo 'M8_ANDROID_CALLBACK_THREAD_RUNTIME_VERIFIED=false'
           echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
 
+      - name: Verify isolated M8 Samsung ADB runner syntax (never execute in CI)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq 'EXPECTED_SHA="fcdcddba50e559585c1d95f2cc24dd3cf7bcf7a1"' scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq '[[ "$model" == "SM-G766U" ]]' scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq -- '--run-on-device' scripts/run-m8-owned-looper-device-probe.sh
+          echo 'M8_SAMSUNG_PROBE_RUNNER_SYNTAX=PASS'
+          echo 'M8_ANDROID_DEVICE_PROBE_EXECUTED=false'
+
       - name: Build standalone M8 owned-looper Android runtime test (not executed)
         shell: bash
         run: |

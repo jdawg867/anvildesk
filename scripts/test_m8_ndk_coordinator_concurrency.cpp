@@ -1,6 +1,7 @@
 // Host-only test of the actual NDK compile-only teardown coordinator.
 // Uses a deliberately fake android/looper.h, NOT an Android runtime test.
 #include <atomic>
+#include <iostream>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -103,5 +104,8 @@ int main() {
     testConcurrentShutdownAndDrain();
     testRemovalErrorRetryWithoutReopening();
     // This uses a host stub with NO real looper callback delivery.
+    std::cout << "M8_NDK_COORDINATOR_HOST_CONCURRENCY=PASS\\n"
+              << "M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false\\n"
+              << "M8_NATIVE_LOAD_AUTHORIZED=false\\n";
     return 0;
 }

@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # required for authenticated read-only artifact preflight
 
 jobs:
   build:
@@ -300,6 +301,29 @@ jobs:
           grep -Fq -- '--run-on-device' scripts/run-m8-owned-looper-device-probe.sh
           echo 'M8_SAMSUNG_PROBE_RUNNER_SYNTAX=PASS'
           echo 'M8_ANDROID_DEVICE_PROBE_EXECUTED=false'
+
+      - name: Exercise M8 artifact-only verification without ADB
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The pinned probe is a short-lived artifact. Do not fail future CI
+          # after its retention expires; report the preflight as skipped.
+          expired="$(gh api repos/jdawg867/anvildesk/actions/artifacts/13716750305 --jq '.expired')"
+          if [[ "$expired" == "true" ]]; then
+            echo 'M8_ARTIFACT_PREFLIGHT_SKIPPED_EXPIRED=true'
+            exit 0
+          fi
+          [[ "$expired" == "false" ]] || {
+            echo 'STOP: unexpected artifact expiration status' >&2
+            exit 1
+          }
+          bash scripts/run-m8-owned-looper-device-probe.sh --verify-artifact \
+            | tee m8-artifact-only-preflight.txt
+          grep -Fx 'M8_ARTIFACT_ONLY_PREFLIGHT=PASS' m8-artifact-only-preflight.txt
+          grep -Fx 'M8_ANDROID_DEVICE_PROBE_EXECUTED=false' m8-artifact-only-preflight.txt
 
       - name: Build standalone M8 owned-looper Android runtime test (not executed)
         shell: bash

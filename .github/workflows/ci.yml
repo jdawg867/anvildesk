@@ -247,6 +247,26 @@ jobs:
           echo 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false'
           echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
 
+      - name: Sanitize owned-looper callback shutdown with host execution shim
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Executes the actual compile-only Android class with fake NDK calls.
+          # No emulator or Android runtime is exercised by this step.
+          c++ -std=c++17 -pthread -D__ANDROID__ \
+            -Iscripts/m8-owned-looper-test-shim -O1 -g -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Wall -Wextra -Werror \
+            scripts/test_m8_owned_looper_host_execution.cpp \
+            -o /tmp/m8-test-owned-looper-host
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 30s /tmp/m8-test-owned-looper-host \
+            | tee m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_HOST_EXECUTION=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-owned-looper-host-test.txt
+
       - name: Cross-compile dedicated M8 Android looper-thread shutdown prototype
         shell: bash
         run: |

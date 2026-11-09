@@ -20,7 +20,8 @@ namespace anvildesk_m8 {
 
 class DedicatedLooperThread final {
 public:
-    DedicatedLooperThread() : worker_([this] { pollLoop(); }) {
+    DedicatedLooperThread()
+        : worker_([this] { pollLoop(); }), workerId_(worker_.get_id()) {
         std::unique_lock<std::mutex> lock(mutex_);
         started_.wait(lock, [this] { return ready_; });
         // No callback or userdata is registered by this prototype.
@@ -38,7 +39,7 @@ public:
     // Competing external callers join exactly once. Do not call this from
     // callbacks on the owned worker; a self-join would deadlock.
     void shutdownAndJoin() {
-        if (std::this_thread::get_id() == worker_.get_id())
+        if (std::this_thread::get_id() == workerId_)
             throw std::logic_error("dedicated looper cannot join itself");
         std::lock_guard<std::mutex> joinLock(joinMutex_);
         if (joined_) return;
@@ -92,6 +93,7 @@ private:
     bool prepared_ = false;
     bool stopping_ = false;
     std::thread worker_;
+    const std::thread::id workerId_; // immutable, safe across concurrent joins
     std::mutex joinMutex_;
     bool joined_ = false; // protected by joinMutex_
 };

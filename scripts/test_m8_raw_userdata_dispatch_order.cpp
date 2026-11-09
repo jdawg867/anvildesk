@@ -96,7 +96,7 @@ public:
     using Callback = std::function<void(void*)>;
     HostDispatchOwner(void* userdata, Callback callback)
         : userdata_(userdata), callback_(std::move(callback)),
-          worker_([this] { run(); }) {}
+          worker_([this] { run(); }), workerId_(worker_.get_id()) {}
     HostDispatchOwner(const HostDispatchOwner&) = delete;
     HostDispatchOwner& operator=(const HostDispatchOwner&) = delete;
 
@@ -122,6 +122,8 @@ public:
     // joining so every caller returns only after the same worker has exited.
     // Never invoke this from a worker callback (self-join is forbidden).
     void shutdownAndJoin() {
+        if (std::this_thread::get_id() == workerId_)
+            throw std::logic_error("dispatcher callback cannot join itself");
         std::lock_guard<std::mutex> joinLock(joinMutex_);
         if (joined_) return;
         {
@@ -153,6 +155,7 @@ private:
     bool stopping_ = false;
     unsigned pending_ = 0;
     std::thread worker_;
+    const std::thread::id workerId_; // immutable identity for self-join guard
     std::mutex joinMutex_; // serializes competing joins, never held by worker
     bool joined_ = false; // guarded by joinMutex_
 };
@@ -266,12 +269,36 @@ static void testShutdownDropsQueuedCallbacksButJoinsActive() {
     owner.shutdownAndJoin(); // idempotent
 }
 
+static void testWorkerCallbackCannotShutdownAndJoinItself() {
+    int userdata = 29;
+    std::atomic<bool> rejected{false};
+    std::atomic<int> callbacks{0};
+    HostDispatchOwner* dispatcher = nullptr;
+    HostDispatchOwner owner(&userdata, [&](void* raw) {
+        check(*static_cast<int*>(raw) == 29, "invalid callback userdata");
+        try {
+            dispatcher->shutdownAndJoin();
+        } catch (const std::logic_error&) {
+            rejected.store(true);
+        }
+        ++callbacks;
+    });
+    dispatcher = &owner;
+    check(owner.queueCallback(), "self-join callback not queued");
+    // A safe outside caller must remain able to perform the real join.
+    owner.shutdownAndJoin();
+    check(callbacks == 1, "callback did not complete after self-join rejection");
+    check(rejected.load(), "callback was permitted to join itself");
+    check(!owner.queueCallback(), "post-join callback admitted");
+}
+
 int main() {
     testQueuedCallbackSurvivesRemovalAndDrain();
     testRunningCallbackKeepsResourceAliveDuringShutdown();
     testHostDispatcherJoinPrecedesRawUserdataRelease();
     testConcurrentShutdownJoinersWaitForActiveCallback();
     testShutdownDropsQueuedCallbacksButJoinsActive();
+    testWorkerCallbackCannotShutdownAndJoinItself();
     std::cout << "M8_RAW_USERDATA_HOST_DISPATCH_ORDER=PASS\n"
               << "M8_ANDROID_DISPATCH_THREAD_JOIN_VERIFIED=false\n"
               << "M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false\n"

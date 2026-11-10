@@ -18,6 +18,7 @@ struct ALooper {
     bool registered = false;
     std::atomic<bool> failRemove{false};
     std::atomic<int> references{0};
+    std::thread::id preparingThread; // set by the worker in ALooper_prepare
     std::promise<void> removalSucceeded; // signals completed deregistration
     int fd = -1;
     ALooper_callbackFunc callback = nullptr;
@@ -28,6 +29,10 @@ static thread_local ALooper* currentLooper = nullptr;
 
 ALooper* ALooper_prepare(int) {
     currentLooper = &platform;
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        platform.preparingThread = std::this_thread::get_id();
+    }
     return currentLooper;
 }
 void ALooper_acquire(ALooper* ptr) { ++ptr->references; }
@@ -125,7 +130,16 @@ static void testWakeJoinAndRemoveRetry() {
             "duplicate FD registration admitted");
     triggerEvent();
     entered.get_future().wait();
-    const bool dispatchedOnWorker = callbackThreadFuture.get() != callerThread;
+    const auto actualCallbackThread = callbackThreadFuture.get();
+    std::thread::id preparedWorkerThread;
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        preparedWorkerThread = platform.preparingThread;
+    }
+    const bool dispatchedOnWorker =
+        preparedWorkerThread != std::thread::id{} &&
+        actualCallbackThread == preparedWorkerThread &&
+        actualCallbackThread != callerThread;
     platform.failRemove.store(true);
     require(!owner.shutdownAndJoin(), "failed removal unexpectedly completed shutdown");
     require(!owner.registerCallback(51, ALOOPER_EVENT_INPUT, heldCallback, &userdata),
@@ -149,7 +163,7 @@ static void testWakeJoinAndRemoveRetry() {
     releaseSignal.set_value();
     shutdown.join();
     competingShutdown.join();
-    require(dispatchedOnWorker, "callback ran on the caller instead of owned worker");
+    require(dispatchedOnWorker, "callback did not run on the looper preparing thread");
     require(selfJoinRejected, "owned worker failed to reject self-join");
     require(stillHeld, "looper reference released before callback completed");
     require(waited, "join completed while active callback still blocked");
@@ -167,6 +181,7 @@ int main() {
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
+              << "M8_OWNED_LOOPER_CALLBACK_PREPARE_THREAD_MATCH=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

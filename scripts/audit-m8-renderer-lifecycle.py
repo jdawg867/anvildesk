@@ -16,6 +16,20 @@ INVARIANTS = {
     "raw_looper_callback_userdata": ('return ((LorieViewResources*) data)->xcallback(fd, events);',),
     "thread_local_looper_teardown": ('ALooper_removeFd(ALooper_forThread(), connFd);',),
 }
+# These are SOURCE OBSERVATIONS only. Their order cannot prove Android's
+# queued callbacks have become quiescent or that JNIEnv is thread-safe.
+DESTRUCTOR_START = "LorieViewResources::~LorieViewResources() {"
+DESTRUCTOR_END = "int LorieViewResources::xcallback("
+DESTRUCTOR_ORDER = (
+    "destroyed = true;",
+    "ALooper_removeFd(ALooper_forThread(), connFd);",
+    "close(connFd);",
+    "connFd = -1;",
+    "renderer.destroy();",
+    "env->DeleteGlobalRef(thiz);",
+    "env->DeleteGlobalRef(activity);",
+)
+
 METHOD_DESTROY = '{"nativeDestroy", "(J)V"'
 METHOD_INIT = '{"nativeInit", "()J"'
 
@@ -27,6 +41,20 @@ def audit(source: str) -> list[str]:
     for token in (METHOD_INIT, METHOD_DESTROY, 'renderer.destroy();'):
         if source.count(token) != 1:
             raise ValueError("Pinned native renderer entry point drift: " + token)
+    if source.count(DESTRUCTOR_START) != 1 or source.count(DESTRUCTOR_END) != 1:
+        raise ValueError("Pinned LorieViewResources destructor boundary drift")
+    destructor = source.split(DESTRUCTOR_START, 1)[1].split(DESTRUCTOR_END, 1)[0]
+    positions = [destructor.find(token) for token in DESTRUCTOR_ORDER]
+    if any(pos < 0 for pos in positions):
+        raise ValueError("Pinned destructor lost looper/renderer/JNI cleanup")
+    if positions != sorted(positions) or len(positions) != len(set(positions)):
+        raise ValueError("Pinned destructor cleanup ordering drift")
+    if "JNIEnv* env = nullptr;" not in source or "vm->AttachCurrentThread(&env, nullptr);" not in source:
+        raise ValueError("Pinned thread-bound JNI environment ownership drift")
+    if "ALooper_addFd(ALooper_forThread(), fd," not in source:
+        raise ValueError("Pinned thread-local callback registration drift")
+    if "this);" not in source:
+        raise ValueError("Pinned callback raw userdata registration drift")
     destroyed = source.index(METHOD_DESTROY)
     destroy_end = source.index('{"surfaceChanged"', destroyed)
     destroy_section = source[destroyed:destroy_end]
@@ -42,6 +70,9 @@ def audit(source: str) -> list[str]:
     return [
         "M8_RENDERER_RAW_POINTER_DESTROY=observed",
         "M8_RENDERER_DESTRUCTOR_BEFORE_FREE_ORDER=observed",
+        "M8_RENDERER_DESTRUCTOR_CLEANUP_ORDER=observed",
+        "M8_RENDERER_THREAD_BOUND_JNI_ENV=observed",
+        "M8_RENDERER_LOOPER_REGISTRATION_THREAD_OWNERSHIP_VERIFIED=false",
         "M8_RENDERER_JAVA_POINTER_OWNERSHIP_VERIFIED=false",
         "M8_RENDERER_DOUBLE_DESTROY_PROTECTION_VERIFIED=false",
         "M8_RENDERER_CALLBACK_TEARDOWN_SYNCHRONIZATION_VERIFIED=false",

@@ -349,6 +349,9 @@ jobs:
             echo 'STOP: Android probe depends on a non-bundled C++ runtime' >&2
             exit 1
           fi
+          grep -Fq 'M8_ANDROID_LOOPER_POST_JOIN_REGISTRATION_REJECTED=PASS' \
+            scripts/m8-android-owned-looper-device-probe.cpp
+          echo 'M8_ANDROID_LOOPER_POST_JOIN_REGRESSION_COMPILED=true'
           echo 'M8_ANDROID_DEVICE_PROBE_STANDALONE_CPP_RUNTIME=PASS'
           echo 'M8_ANDROID_DEVICE_PROBE_BUILD=PASS'
           echo 'M8_ANDROID_DEVICE_PROBE_EXECUTED=false'

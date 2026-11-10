@@ -33,6 +33,7 @@ class RendererLifecycleAuditTests(unittest.TestCase):
     def test_pinned_lifetime_hazards_reported_without_approval(self):
         report = mod.audit(SOURCE)
         self.assertIn("M8_RENDERER_DOUBLE_DESTROY_PROTECTION_VERIFIED=false", report)
+        self.assertIn("M8_RENDERER_DESTRUCTOR_BEFORE_FREE_ORDER=observed", report)
         self.assertIn("M8_RENDERER_CALLBACK_TEARDOWN_SYNCHRONIZATION_VERIFIED=false", report)
         self.assertIn("M8_NATIVE_LOAD_AUTHORIZED=false", report)
         self.assertIn("M8_RENDERER_RAW_LOOPER_USERDATA=observed", report)
@@ -58,6 +59,15 @@ class RendererLifecycleAuditTests(unittest.TestCase):
     def test_native_destroy_drift_rejected(self):
         with self.assertRaises(ValueError):
             mod.audit(SOURCE.replace("free(r);", "delete r;"))
+
+    def test_premature_free_before_native_destructor_rejected(self):
+        unsafe = SOURCE.replace(
+            "    r->~LorieViewResources();\n    free(r);",
+            "    free(r);\n    r->~LorieViewResources();",
+        )
+        self.assertNotEqual(unsafe, SOURCE)
+        with self.assertRaisesRegex(ValueError, "before destructor"):
+            mod.audit(unsafe)
 
     def test_double_destroy_entry_point_rejected(self):
         with self.assertRaises(ValueError):

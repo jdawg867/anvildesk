@@ -77,6 +77,13 @@ int runProbe() {
                 }
             }
         }
+        // The worker has joined on the successful path. No subsequent
+        // registration may re-open callback admission or retain userdata
+        // after its owner is eligible for destruction.
+        if (result == 0 &&
+            looper.registerCallback(fds[0], ALOOPER_EVENT_INPUT,
+                                    pipeCallback, &callbackData))
+            result = 18;
     }
     close(fds[0]);
     close(fds[1]);
@@ -92,6 +99,7 @@ int main() {
         return result;
     }
     std::cout << "M8_ANDROID_OWNED_LOOPER_DEVICE_TEST=PASS\n"
+              << "M8_ANDROID_LOOPER_POST_JOIN_REGISTRATION_REJECTED=PASS\n"
               << "M8_X11_RENDERER_INTEGRATION_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";
 }

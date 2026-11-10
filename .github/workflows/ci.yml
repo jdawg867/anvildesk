@@ -405,6 +405,23 @@ jobs:
           echo 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false'
           echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
 
+      - name: Test isolated M8 callback admission and drain gate (host only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -Wall -Wextra -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            scripts/m8-renderer-callback-gate-host-test.cpp \
+            -o /tmp/m8-renderer-callback-gate-host-test
+          ASAN_OPTIONS=detect_leaks=1 \
+            timeout 20s /tmp/m8-renderer-callback-gate-host-test \
+            | tee /tmp/m8-renderer-callback-gate-results.txt
+          grep -Fx 'M8_CALLBACK_GATE_HOST_DRAIN=PASS' /tmp/m8-renderer-callback-gate-results.txt
+          grep -Fx 'M8_CALLBACK_GATE_POST_STOP_ENTRY_REJECTED=PASS' /tmp/m8-renderer-callback-gate-results.txt
+          grep -Fx 'M8_ANDROID_LOOPER_CALLBACK_QUIESCENCE_VERIFIED=false' /tmp/m8-renderer-callback-gate-results.txt
+          grep -Fx 'M8_RENDERER_JNI_LIFECYCLE_VERIFIED=false' /tmp/m8-renderer-callback-gate-results.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' /tmp/m8-renderer-callback-gate-results.txt
+
       - name: Verify M8 renderer looper disconnect and lifecycle guards
         shell: bash
         run: |

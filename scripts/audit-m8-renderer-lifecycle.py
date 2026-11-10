@@ -30,6 +30,15 @@ DESTRUCTOR_ORDER = (
     "env->DeleteGlobalRef(activity);",
 )
 
+# Pin the callback body, not merely unrelated JNI symbols elsewhere in
+# activity.cpp. The callback uses the retained JNIEnv* to reach Java.
+CALLBACK_START = "int LorieViewResources::xcallback(int fd, int events) {"
+CALLBACK_END = "void LorieViewResources::connect(jint fd) {"
+CALLBACK_JNI_OPERATIONS = (
+    "env->CallVoidMethod(",
+    "env->GetMethodID(",
+)
+
 METHOD_DESTROY = '{"nativeDestroy", "(J)V"'
 METHOD_INIT = '{"nativeInit", "()J"'
 
@@ -55,6 +64,16 @@ def audit(source: str) -> list[str]:
         raise ValueError("Pinned thread-local callback registration drift")
     if "this);" not in source:
         raise ValueError("Pinned callback raw userdata registration drift")
+    if source.count(CALLBACK_START) != 1 or source.count(CALLBACK_END) != 1:
+        raise ValueError("Pinned xcallback body boundary drift")
+    callback = source.split(CALLBACK_START, 1)[1].split(CALLBACK_END, 1)[0]
+    if any(operation not in callback for operation in CALLBACK_JNI_OPERATIONS):
+        raise ValueError("Pinned xcallback JNI usage drift")
+    # The stored env is acquired by AttachCurrentThread, not by a
+    # thread-independent JavaVM lookup at callback entry. This audit
+    # records that hazard; it does not label the source as safe.
+    if "env->GetJavaVM(&vm)" in callback or "vm->AttachCurrentThread" in callback:
+        raise ValueError("Pinned callback JNI acquisition changed; re-audit needed")
     destroyed = source.index(METHOD_DESTROY)
     destroy_end = source.index('{"surfaceChanged"', destroyed)
     destroy_section = source[destroyed:destroy_end]
@@ -72,6 +91,8 @@ def audit(source: str) -> list[str]:
         "M8_RENDERER_DESTRUCTOR_BEFORE_FREE_ORDER=observed",
         "M8_RENDERER_DESTRUCTOR_CLEANUP_ORDER=observed",
         "M8_RENDERER_THREAD_BOUND_JNI_ENV=observed",
+        "M8_RENDERER_CALLBACK_USES_STORED_JNI_ENV=observed",
+        "M8_RENDERER_CALLBACK_JNI_THREAD_AFFINITY_VERIFIED=false",
         "M8_RENDERER_LOOPER_REGISTRATION_THREAD_OWNERSHIP_VERIFIED=false",
         "M8_RENDERER_JAVA_POINTER_OWNERSHIP_VERIFIED=false",
         "M8_RENDERER_DOUBLE_DESTROY_PROTECTION_VERIFIED=false",

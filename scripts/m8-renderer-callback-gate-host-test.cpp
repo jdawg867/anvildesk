@@ -104,10 +104,10 @@ int main() {
     if (!newEntryRejected || !oneStillActive || !fullyDrained ||
         !postStopRejected) return 1;
 
-    std::cout << "M8_CALLBACK_GATE_HOST_DRAIN=PASS\\n"
-                 "M8_CALLBACK_GATE_MULTIPLE_ACTIVE_DRAIN=PASS\\n"
-                 "M8_CALLBACK_GATE_POST_STOP_ENTRY_REJECTED=PASS\\n"
-                 "M8_ANDROID_LOOPER_CALLBACK_QUIESCENCE_VERIFIED=false\\n"
-                 "M8_RENDERER_JNI_LIFECYCLE_VERIFIED=false\\n"
-                 "M8_NATIVE_LOAD_AUTHORIZED=false\\n";
+    std::cout << "M8_CALLBACK_GATE_HOST_DRAIN=PASS\n"
+                 "M8_CALLBACK_GATE_MULTIPLE_ACTIVE_DRAIN=PASS\n"
+                 "M8_CALLBACK_GATE_POST_STOP_ENTRY_REJECTED=PASS\n"
+                 "M8_ANDROID_LOOPER_CALLBACK_QUIESCENCE_VERIFIED=false\n"
+                 "M8_RENDERER_JNI_LIFECYCLE_VERIFIED=false\n"
+                 "M8_NATIVE_LOAD_AUTHORIZED=false\n";
 }

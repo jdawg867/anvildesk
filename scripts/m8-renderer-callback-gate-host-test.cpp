@@ -35,24 +35,28 @@ public:
 
     Lease tryEnter() {
         std::lock_guard<std::mutex> lock(mu_);
-        if (stopping_) return {};
+        if (stopping_) return Lease(nullptr);
         ++active_;
         return Lease(this);
     }
 
-    void stopAdmissionAndDrain() {
+    void stopAdmissionAndDrain(std::promise<void>& stopStarted) {
         std::unique_lock<std::mutex> lock(mu_);
         stopping_ = true;
+        // The owner now refuses every new callback lease. Announce that
+        // transition before waiting for outstanding callbacks to finish.
+        stopStarted.set_value();
         cv_.wait(lock, [this] { return active_ == 0; });
     }
 };
 
 int main() {
     CallbackGate gate;
-    std::promise<void> entered, release, stopped;
+    std::promise<void> entered, release, stopStarted, stopped;
     auto enteredFuture = entered.get_future();
     auto releaseSignal = release.get_future().share();
     auto stoppedFuture = stopped.get_future();
+    auto stopStartedFuture = stopStarted.get_future();
     std::atomic<bool> callbackFinished{false};
     std::thread callback([&] {
         auto lease = gate.tryEnter();
@@ -63,12 +67,19 @@ int main() {
     });
     enteredFuture.wait();
     std::thread shutdown([&] {
-        gate.stopAdmissionAndDrain();
+        gate.stopAdmissionAndDrain(stopStarted);
         stopped.set_value();
     });
-    // Shutdown must not be allowed to return until the callback exits.
-    // No sleep / scheduler assumptions: use a second gate arrival only
-    // after the shutdown completion fence below.
+    // Wait until callback admission is actually stopped. This handshake
+    // eliminates scheduler timing assumptions about the shutdown thread.
+    stopStartedFuture.wait();
+    if (gate.tryEnter()) {
+        release.set_value();
+        callback.join();
+        shutdown.join();
+        return 4;
+    }
+    // A blocked callback must keep the shutdown operation incomplete.
     if (stoppedFuture.wait_for(std::chrono::milliseconds(0)) ==
         std::future_status::ready) {
         release.set_value();

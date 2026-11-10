@@ -86,20 +86,25 @@ static void triggerEvent() {
 struct Userdata {
     std::atomic<int>* calls;
     std::promise<void>* entered;
+    std::promise<std::thread::id>* callbackThread;
     std::shared_future<void>* release;
 };
 static int heldCallback(int, int, void* raw) {
     auto* userdata = static_cast<Userdata*>(raw);
     ++*userdata->calls;
+    userdata->callbackThread->set_value(std::this_thread::get_id());
     userdata->entered->set_value();
     userdata->release->wait();
     return 1;
 }
 static void testWakeJoinAndRemoveRetry() {
     std::promise<void> entered, releaseSignal;
+    std::promise<std::thread::id> callbackThread;
+    auto callbackThreadFuture = callbackThread.get_future();
+    const auto callerThread = std::this_thread::get_id();
     auto released = releaseSignal.get_future().share();
     std::atomic<int> calls{0};
-    Userdata userdata{&calls, &entered, &released};
+    Userdata userdata{&calls, &entered, &callbackThread, &released};
     anvildesk_m8::DedicatedLooperThread owner;
     require(owner.initialized(), "looper prepare failed");
     require(platform.references == 1, "looper ref not held");
@@ -109,6 +114,7 @@ static void testWakeJoinAndRemoveRetry() {
             "duplicate FD registration admitted");
     triggerEvent();
     entered.get_future().wait();
+    const bool dispatchedOnWorker = callbackThreadFuture.get() != callerThread;
     platform.failRemove.store(true);
     require(!owner.shutdownAndJoin(), "failed removal unexpectedly completed shutdown");
     require(!owner.registerCallback(51, ALOOPER_EVENT_INPUT, heldCallback, &userdata),
@@ -132,6 +138,7 @@ static void testWakeJoinAndRemoveRetry() {
     releaseSignal.set_value();
     shutdown.join();
     competingShutdown.join();
+    require(dispatchedOnWorker, "callback ran on the caller instead of owned worker");
     require(stillHeld, "looper reference released before callback completed");
     require(waited, "join completed while active callback still blocked");
     require(competingWaited, "competing shutdown completed before callback release");
@@ -147,6 +154,7 @@ int main() {
     testWakeJoinAndRemoveRetry();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
+              << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";
 }

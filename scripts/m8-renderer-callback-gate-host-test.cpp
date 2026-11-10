@@ -52,50 +52,62 @@ public:
 
 int main() {
     CallbackGate gate;
-    std::promise<void> entered, release, stopStarted, stopped;
-    auto enteredFuture = entered.get_future();
-    auto releaseSignal = release.get_future().share();
-    auto stoppedFuture = stopped.get_future();
+    std::promise<void> enteredOne, enteredTwo, releaseOne, releaseTwo;
+    std::promise<void> stopStarted, stopped;
+    auto enteredOneFuture = enteredOne.get_future();
+    auto enteredTwoFuture = enteredTwo.get_future();
+    auto releaseOneSignal = releaseOne.get_future().share();
+    auto releaseTwoSignal = releaseTwo.get_future().share();
     auto stopStartedFuture = stopStarted.get_future();
-    std::atomic<bool> callbackFinished{false};
-    std::thread callback([&] {
+    auto stoppedFuture = stopped.get_future();
+    std::atomic<int> finished{0};
+
+    std::thread callbackOne([&] {
         auto lease = gate.tryEnter();
         if (!lease) return;
-        entered.set_value();
-        releaseSignal.wait();
-        callbackFinished.store(true);
+        enteredOne.set_value();
+        releaseOneSignal.wait();
+        ++finished;
     });
-    enteredFuture.wait();
+    enteredOneFuture.wait();
+    std::thread callbackTwo([&] {
+        auto lease = gate.tryEnter();
+        if (!lease) return;
+        enteredTwo.set_value();
+        releaseTwoSignal.wait();
+        ++finished;
+    });
+    enteredTwoFuture.wait();
+
     std::thread shutdown([&] {
         gate.stopAdmissionAndDrain(stopStarted);
         stopped.set_value();
     });
-    // Wait until callback admission is actually stopped. This handshake
-    // eliminates scheduler timing assumptions about the shutdown thread.
-    stopStartedFuture.wait();
-    if (gate.tryEnter()) {
-        release.set_value();
-        callback.join();
-        shutdown.join();
-        return 4;
-    }
-    // A blocked callback must keep the shutdown operation incomplete.
-    if (stoppedFuture.wait_for(std::chrono::milliseconds(0)) ==
-        std::future_status::ready) {
-        release.set_value();
-        callback.join();
-        shutdown.join();
-        return 1;
-    }
-    release.set_value();
-    callback.join();
+    stopStartedFuture.wait(); // admission definitely closed
+    const bool newEntryRejected = !gate.tryEnter();
+
+    // Releasing only the first callback must not let teardown complete.
+    releaseOne.set_value();
+    callbackOne.join();
+    const bool oneStillActive = finished.load() == 1 &&
+        stoppedFuture.wait_for(std::chrono::milliseconds(0)) !=
+            std::future_status::ready;
+
+    releaseTwo.set_value();
+    callbackTwo.join();
     shutdown.join();
-    if (!callbackFinished.load() || gate.tryEnter()) return 2;
-    if (stoppedFuture.wait_for(std::chrono::seconds(0)) !=
-        std::future_status::ready) return 3;
-    std::cout << "M8_CALLBACK_GATE_HOST_DRAIN=PASS\n"
-                 "M8_CALLBACK_GATE_POST_STOP_ENTRY_REJECTED=PASS\n"
-                 "M8_ANDROID_LOOPER_CALLBACK_QUIESCENCE_VERIFIED=false\n"
-                 "M8_RENDERER_JNI_LIFECYCLE_VERIFIED=false\n"
-                 "M8_NATIVE_LOAD_AUTHORIZED=false\n";
+
+    const bool fullyDrained = finished.load() == 2 &&
+        stoppedFuture.wait_for(std::chrono::seconds(0)) ==
+            std::future_status::ready;
+    const bool postStopRejected = !gate.tryEnter();
+    if (!newEntryRejected || !oneStillActive || !fullyDrained ||
+        !postStopRejected) return 1;
+
+    std::cout << "M8_CALLBACK_GATE_HOST_DRAIN=PASS\\n"
+                 "M8_CALLBACK_GATE_MULTIPLE_ACTIVE_DRAIN=PASS\\n"
+                 "M8_CALLBACK_GATE_POST_STOP_ENTRY_REJECTED=PASS\\n"
+                 "M8_ANDROID_LOOPER_CALLBACK_QUIESCENCE_VERIFIED=false\\n"
+                 "M8_RENDERER_JNI_LIFECYCLE_VERIFIED=false\\n"
+                 "M8_NATIVE_LOAD_AUTHORIZED=false\\n";
 }

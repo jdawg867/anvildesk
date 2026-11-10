@@ -151,6 +151,15 @@ static void testWakeJoinAndRemoveRetry() {
     // Wait for REAL proof that the retry deregistered the FD, not merely
     // for the shutdown thread to be scheduled. The callback is still blocked.
     deregistered.wait();
+    // Registration from a different external thread, after confirmed FD
+    // removal but before callback release, must not reopen admission.
+    std::atomic<bool> lateRegistrationAccepted{false};
+    std::thread lateRegistrar([&] {
+        lateRegistrationAccepted.store(
+            owner.registerCallback(53, ALOOPER_EVENT_INPUT,
+                                   heldCallback, &userdata));
+    });
+    lateRegistrar.join();
     // Queue a fresh readiness notification after ALooper_removeFd succeeded
     // while the first callback is still blocked. The owned worker must never
     // deliver it after the current callback returns and shutdown joins.
@@ -174,6 +183,7 @@ static void testWakeJoinAndRemoveRetry() {
     require(competingWaited, "competing shutdown completed before callback release");
     require(completed, "retry did not join worker");
     require(competingCompleted, "competing shutdown did not observe joined state");
+    require(!lateRegistrationAccepted, "registration reopened after successful FD removal");
     require(calls == 1, "callback dispatched again after descriptor removal");
     require(platform.references == 0, "retained looper ref leaked");
     require(!owner.registerCallback(52, ALOOPER_EVENT_INPUT, heldCallback, &userdata),
@@ -187,6 +197,7 @@ int main() {
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_PREPARE_THREAD_MATCH=PASS\n"
               << "M8_OWNED_LOOPER_POST_REMOVE_EVENT_SUPPRESSED=PASS\n"
+              << "M8_OWNED_LOOPER_POST_REMOVE_REGISTRATION_REJECTED=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

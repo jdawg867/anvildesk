@@ -42,7 +42,6 @@ ALooper_removeFd(ALooper_forThread(), connFd);
 return ((LorieViewResources*) data)->xcallback(fd, events);
 ALOOPER_EVENT_HANGUP;
 MainActivity.clientConnectedStateChanged;
-renderer.destroy();
 {"nativeInit", "()J", (void *)&nativeInit},
 {"nativeDestroy", "(J)V", (void *) +[](JNIEnv *env, jobject thiz, jlong ptr) {
     auto* r = (LorieViewResources*) ptr;

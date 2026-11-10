@@ -30,10 +30,18 @@ def audit(source: str) -> list[str]:
     destroyed = source.index(METHOD_DESTROY)
     destroy_end = source.index('{"surfaceChanged"', destroyed)
     destroy_section = source[destroyed:destroy_end]
-    if 'r->~LorieViewResources();' not in destroy_section or 'free(r);' not in destroy_section:
+    destructor_call = destroy_section.find('r->~LorieViewResources();')
+    raw_free = destroy_section.find('free(r);')
+    if destructor_call < 0 or raw_free < 0:
         raise ValueError("Pinned nativeDestroy implementation drift")
+    # Preserve the expected destruction ordering even in this unsafe pinned
+    # implementation. Moving free() earlier would cause an immediate UAF,
+    # and broad token checks alone would incorrectly accept that regression.
+    if raw_free < destructor_call:
+        raise ValueError("Pinned nativeDestroy frees memory before destructor")
     return [
         "M8_RENDERER_RAW_POINTER_DESTROY=observed",
+        "M8_RENDERER_DESTRUCTOR_BEFORE_FREE_ORDER=observed",
         "M8_RENDERER_JAVA_POINTER_OWNERSHIP_VERIFIED=false",
         "M8_RENDERER_DOUBLE_DESTROY_PROTECTION_VERIFIED=false",
         "M8_RENDERER_CALLBACK_TEARDOWN_SYNCHRONIZATION_VERIFIED=false",

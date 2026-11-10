@@ -417,6 +417,7 @@ jobs:
             timeout 20s /tmp/m8-renderer-callback-gate-host-test \
             | tee /tmp/m8-renderer-callback-gate-results.txt
           grep -Fx 'M8_CALLBACK_GATE_HOST_DRAIN=PASS' /tmp/m8-renderer-callback-gate-results.txt
+          grep -Fx 'M8_CALLBACK_GATE_MULTIPLE_ACTIVE_DRAIN=PASS' /tmp/m8-renderer-callback-gate-results.txt
           grep -Fx 'M8_CALLBACK_GATE_POST_STOP_ENTRY_REJECTED=PASS' /tmp/m8-renderer-callback-gate-results.txt
           grep -Fx 'M8_ANDROID_LOOPER_CALLBACK_QUIESCENCE_VERIFIED=false' /tmp/m8-renderer-callback-gate-results.txt
           grep -Fx 'M8_RENDERER_JNI_LIFECYCLE_VERIFIED=false' /tmp/m8-renderer-callback-gate-results.txt

@@ -28,7 +28,13 @@ LorieViewResources::~LorieViewResources() {
     }
 }
 int LorieViewResources::xcallback(int fd, int events) {
+    env->CallVoidMethod(thiz, MainActivity.clientConnectedStateChanged);
+    env->GetMethodID(env->GetObjectClass(thiz), "onSyncReply", "(I)V");
     return 1;
+}
+void LorieViewResources::connect(jint fd) {
+    ALooper_addFd(ALooper_forThread(), fd, 0, ALOOPER_EVENT_INPUT,
+              callback, this);
 }
 ALooper_addFd(ALooper_forThread(), fd, 0, ALOOPER_EVENT_INPUT,
               callback, this);
@@ -59,6 +65,8 @@ class RendererLifecycleAuditTests(unittest.TestCase):
         self.assertIn("M8_RENDERER_DESTRUCTOR_BEFORE_FREE_ORDER=observed", report)
         self.assertIn("M8_RENDERER_DESTRUCTOR_CLEANUP_ORDER=observed", report)
         self.assertIn("M8_RENDERER_THREAD_BOUND_JNI_ENV=observed", report)
+        self.assertIn("M8_RENDERER_CALLBACK_USES_STORED_JNI_ENV=observed", report)
+        self.assertIn("M8_RENDERER_CALLBACK_JNI_THREAD_AFFINITY_VERIFIED=false", report)
         self.assertIn("M8_RENDERER_LOOPER_REGISTRATION_THREAD_OWNERSHIP_VERIFIED=false", report)
         self.assertIn("M8_RENDERER_CALLBACK_TEARDOWN_SYNCHRONIZATION_VERIFIED=false", report)
         self.assertIn("M8_NATIVE_LOAD_AUTHORIZED=false", report)
@@ -100,6 +108,24 @@ class RendererLifecycleAuditTests(unittest.TestCase):
             mod.audit(SOURCE.replace(
                 "ALooper_addFd(ALooper_forThread(), fd,",
                 "ALooper_addFd(otherLooper, fd,",
+            ))
+
+    def test_callback_jni_method_invocation_drift_rejected(self):
+        with self.assertRaisesRegex(ValueError, "xcallback JNI"):
+            mod.audit(SOURCE.replace(
+                'env->CallVoidMethod(thiz, MainActivity.clientConnectedStateChanged);', ''
+            ))
+
+    def test_callback_jni_method_lookup_drift_rejected(self):
+        with self.assertRaisesRegex(ValueError, "xcallback JNI"):
+            mod.audit(SOURCE.replace(
+                'env->GetMethodID(env->GetObjectClass(thiz), "onSyncReply", "(I)V");', ''
+            ))
+
+    def test_callback_boundary_drift_rejected(self):
+        with self.assertRaisesRegex(ValueError, "xcallback body boundary"):
+            mod.audit(SOURCE.replace(
+                'void LorieViewResources::connect(jint fd) {', ''
             ))
 
     def test_missing_global_reference_release_rejected(self):

@@ -8,6 +8,30 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
 SOURCE = '''
+JNIEnv* env = nullptr;
+vm->AttachCurrentThread(&env, nullptr);
+LorieViewResources::~LorieViewResources() {
+    destroyed = true;
+    if (connFd != -1) {
+        ALooper_removeFd(ALooper_forThread(), connFd);
+        close(connFd);
+        connFd = -1;
+    }
+    renderer.destroy();
+    if (thiz) {
+        env->DeleteGlobalRef(thiz);
+        thiz = nullptr;
+    }
+    if (activity) {
+        env->DeleteGlobalRef(activity);
+        activity = nullptr;
+    }
+}
+int LorieViewResources::xcallback(int fd, int events) {
+    return 1;
+}
+ALooper_addFd(ALooper_forThread(), fd, 0, ALOOPER_EVENT_INPUT,
+              callback, this);
 thiz = env->NewGlobalRef(view);
 activity = env->NewGlobalRef(a);
 env->DeleteGlobalRef(thiz);
@@ -34,6 +58,9 @@ class RendererLifecycleAuditTests(unittest.TestCase):
         report = mod.audit(SOURCE)
         self.assertIn("M8_RENDERER_DOUBLE_DESTROY_PROTECTION_VERIFIED=false", report)
         self.assertIn("M8_RENDERER_DESTRUCTOR_BEFORE_FREE_ORDER=observed", report)
+        self.assertIn("M8_RENDERER_DESTRUCTOR_CLEANUP_ORDER=observed", report)
+        self.assertIn("M8_RENDERER_THREAD_BOUND_JNI_ENV=observed", report)
+        self.assertIn("M8_RENDERER_LOOPER_REGISTRATION_THREAD_OWNERSHIP_VERIFIED=false", report)
         self.assertIn("M8_RENDERER_CALLBACK_TEARDOWN_SYNCHRONIZATION_VERIFIED=false", report)
         self.assertIn("M8_NATIVE_LOAD_AUTHORIZED=false", report)
         self.assertIn("M8_RENDERER_RAW_LOOPER_USERDATA=observed", report)
@@ -50,6 +77,30 @@ class RendererLifecycleAuditTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             mod.audit(SOURCE.replace(
                 "ALooper_removeFd(ALooper_forThread(), connFd);", ""
+            ))
+
+    def test_renderer_cleanup_before_deregistration_rejected(self):
+        premature = SOURCE.replace(
+            "    renderer.destroy();",
+            "    ALooper_removeFd(ALooper_forThread(), connFd);\n    renderer.destroy();",
+        ).replace(
+            "        ALooper_removeFd(ALooper_forThread(), connFd);\n        close(connFd);",
+            "        close(connFd);",
+        )
+        with self.assertRaisesRegex(ValueError, "cleanup"):
+            mod.audit(premature)
+
+    def test_thread_bound_jni_env_drift_rejected(self):
+        with self.assertRaisesRegex(ValueError, "JNI"):
+            mod.audit(SOURCE.replace(
+                "vm->AttachCurrentThread(&env, nullptr);", ""
+            ))
+
+    def test_registration_no_longer_thread_local_rejected(self):
+        with self.assertRaisesRegex(ValueError, "registration"):
+            mod.audit(SOURCE.replace(
+                "ALooper_addFd(ALooper_forThread(), fd,",
+                "ALooper_addFd(otherLooper, fd,",
             ))
 
     def test_missing_global_reference_release_rejected(self):

@@ -122,11 +122,21 @@ static void testWakeJoinAndRemoveRetry() {
     deregistered.wait();
     const bool waited = !completed.load();
     const bool stillHeld = platform.references.load() == 1;
+    // A second external shutdown caller must serialize behind the first,
+    // not race the worker join or release the looper while userdata is live.
+    std::atomic<bool> competingCompleted{false};
+    std::thread competingShutdown([&] {
+        competingCompleted = owner.shutdownAndJoin();
+    });
+    const bool competingWaited = !competingCompleted.load();
     releaseSignal.set_value();
     shutdown.join();
+    competingShutdown.join();
     require(stillHeld, "looper reference released before callback completed");
     require(waited, "join completed while active callback still blocked");
+    require(competingWaited, "competing shutdown completed before callback release");
     require(completed, "retry did not join worker");
+    require(competingCompleted, "competing shutdown did not observe joined state");
     require(calls == 1, "callback delivery count incorrect");
     require(platform.references == 0, "retained looper ref leaked");
     require(!owner.registerCallback(52, ALOOPER_EVENT_INPUT, heldCallback, &userdata),
@@ -136,6 +146,7 @@ static void testWakeJoinAndRemoveRetry() {
 int main() {
     testWakeJoinAndRemoveRetry();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
+              << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";
 }

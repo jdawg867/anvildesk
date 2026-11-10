@@ -1,8 +1,10 @@
 # M8 Samsung owned-looper device acceptance gate
 
-**Status: NOT PASSED.** The owned-looper executable is built and validated in
-GitHub Actions, but no physical Android device execution has been recorded.
-Neither a host looper shim nor an Android ARM64 link test is a substitute.
+**Status: STANDALONE DEVICE PROBE PASSED (user-reported terminal output).**
+The user ran the guarded ADB probe on the Samsung test device on
+2026-11-09 and supplied its PASS output. This is evidence for this one
+standalone looper scenario, not for X11 renderer or JNI lifecycle acceptance.
+Temporary-file cleanup and Android API level were not independently verified.
 
 ## Provenance
 
@@ -52,6 +54,31 @@ M8_DEVICE_PROBE_SMOKE_TEST=PASS
 Record: device model, API level, ABI, exact artifact ID/source SHA, test output,
 ADB exit status, and whether temporary-file cleanup succeeded. Do not record
 device serials, authentication material, user app data, or Linux rootfs contents.
+
+## Physical-device evidence (2026-11-09)
+
+The user's completed terminal session ran the pinned runner with
+`--run-on-device`. It reported:
+
+```text
+M8_ARTIFACT_ONLY_PREFLIGHT=PASS
+M8_ANDROID_OWNED_LOOPER_DEVICE_TEST=PASS
+M8_X11_RENDERER_INTEGRATION_VERIFIED=false
+M8_NATIVE_LOAD_AUTHORIZED=false
+M8_DEVICE_PROBE_SMOKE_TEST=PASS
+```
+
+The ADB transfer reported one file pushed and the standalone Android test
+completed without a visible timeout or failure. The runner's known model and
+ABI checks must have passed to reach execution, but the full Android API level
+was not printed. The terminal transcript does not independently demonstrate
+that remote-file cleanup succeeded. The ADB identifier is intentionally not
+recorded in this repository. GitHub CI #822 independently verified the
+artifact-only preflight on the pinned CI #808 executable.
+
+**Acceptance scope:** standalone physical-device looper callback-and-join
+smoke test **PASS**; upstream Lorie renderer/JNI and complete Android callback
+userdata ownership **NOT VERIFIED**. No production native load authorization.
 
 ## Failure policy and promotion gate
 

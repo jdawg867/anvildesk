@@ -88,11 +88,20 @@ struct Userdata {
     std::promise<void>* entered;
     std::promise<std::thread::id>* callbackThread;
     std::shared_future<void>* release;
+    anvildesk_m8::DedicatedLooperThread* owner;
+    std::atomic<bool>* selfJoinRejected;
 };
 static int heldCallback(int, int, void* raw) {
     auto* userdata = static_cast<Userdata*>(raw);
     ++*userdata->calls;
     userdata->callbackThread->set_value(std::this_thread::get_id());
+    // Joining from inside the owned worker must be rejected, without
+    // closing registration admission or poisoning later external teardown.
+    try {
+        userdata->owner->shutdownAndJoin();
+    } catch (const std::logic_error&) {
+        userdata->selfJoinRejected->store(true);
+    }
     userdata->entered->set_value();
     userdata->release->wait();
     return 1;
@@ -104,8 +113,10 @@ static void testWakeJoinAndRemoveRetry() {
     const auto callerThread = std::this_thread::get_id();
     auto released = releaseSignal.get_future().share();
     std::atomic<int> calls{0};
-    Userdata userdata{&calls, &entered, &callbackThread, &released};
+    std::atomic<bool> selfJoinRejected{false};
     anvildesk_m8::DedicatedLooperThread owner;
+    Userdata userdata{&calls, &entered, &callbackThread, &released,
+                      &owner, &selfJoinRejected};
     require(owner.initialized(), "looper prepare failed");
     require(platform.references == 1, "looper ref not held");
     require(owner.registerCallback(50, ALOOPER_EVENT_INPUT, heldCallback, &userdata),
@@ -139,6 +150,7 @@ static void testWakeJoinAndRemoveRetry() {
     shutdown.join();
     competingShutdown.join();
     require(dispatchedOnWorker, "callback ran on the caller instead of owned worker");
+    require(selfJoinRejected, "owned worker failed to reject self-join");
     require(stillHeld, "looper reference released before callback completed");
     require(waited, "join completed while active callback still blocked");
     require(competingWaited, "competing shutdown completed before callback release");
@@ -155,6 +167,7 @@ int main() {
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
+              << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";
 }

@@ -21,6 +21,7 @@ struct ALooper {
     std::atomic<int> references{0};
     std::thread::id preparingThread; // set by the worker in ALooper_prepare
     std::promise<void> removalSucceeded; // signals completed deregistration
+    std::promise<void> callbackAutoRemoved; // callback returned zero
     int fd = -1;
     ALooper_callbackFunc callback = nullptr;
     void* userdata = nullptr;
@@ -77,7 +78,16 @@ int ALooper_pollOnce(int, int*, int*, void**) {
         const auto cb = ptr->callback;
         void* data = ptr->userdata;
         lock.unlock();
-        cb(fd, ALOOPER_EVENT_INPUT, data);
+        const int callbackResult = cb(fd, ALOOPER_EVENT_INPUT, data);
+        if (callbackResult == 0) {
+            std::lock_guard<std::mutex> afterCallback(ptr->mutex);
+            if (ptr->registered && ptr->fd == fd && ptr->callback == cb &&
+                ptr->userdata == data) {
+                ptr->registered = false;
+                ptr->pending = false;
+                ptr->callbackAutoRemoved.set_value();
+            }
+        }
         return 1;
     }
     return 0;
@@ -259,10 +269,39 @@ static void testPrepareFailureAndShutdown() {
     require(platform.references == 0, "recovered looper leaked a reference");
 }
 
+static int autoRemovingCallback(int, int, void* raw) {
+    auto* invocations = static_cast<std::atomic<int>*>(raw);
+    ++*invocations;
+    return 0; // NDK callback convention: unregister this descriptor
+}
+static void testCallbackReturnZeroDeregistration() {
+    require(platform.references == 0, "prior looper leaked a reference");
+    std::atomic<int> invocations{0};
+    auto removed = platform.callbackAutoRemoved.get_future();
+    anvildesk_m8::DedicatedLooperThread owner;
+    require(owner.initialized(), "auto-removal looper preparation failed");
+    require(owner.registerCallback(90, ALOOPER_EVENT_INPUT,
+                                   autoRemovingCallback, &invocations),
+            "auto-removing callback registration failed");
+    triggerEvent();
+    require(removed.wait_for(std::chrono::seconds(5)) == std::future_status::ready,
+            "callback did not auto-remove its descriptor");
+    require(owner.shutdownAndJoin(), "shutdown failed after callback auto-removal");
+    require(invocations == 1, "auto-removing callback invoked unexpectedly");
+    require(platform.references == 0, "callback auto-removal leaked looper ref");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered, "auto-removed descriptor remained registered");
+    }
+    require(!owner.registerCallback(91, ALOOPER_EVENT_INPUT,
+                                    autoRemovingCallback, &invocations),
+            "post-join registration admitted after callback auto-removal");
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
     testPrepareFailureAndShutdown();
+    testCallbackReturnZeroDeregistration();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -273,6 +312,7 @@ int main() {
               << "M8_OWNED_LOOPER_INVALID_REGISTRATION_REJECTED=PASS\n"
               << "M8_OWNED_LOOPER_ADD_FD_FAILURE_RECOVERY=PASS\n"
               << "M8_OWNED_LOOPER_PREPARE_FAILURE_RECOVERY=PASS\n"
+              << "M8_OWNED_LOOPER_CALLBACK_AUTO_REMOVE=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

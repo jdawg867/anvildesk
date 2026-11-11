@@ -27,8 +27,10 @@ struct ALooper {
 };
 static ALooper platform;
 static thread_local ALooper* currentLooper = nullptr;
+static std::atomic<bool> failPrepare{false};
 
 ALooper* ALooper_prepare(int) {
+    if (failPrepare.load()) return nullptr;
     currentLooper = &platform;
     {
         std::lock_guard<std::mutex> lock(platform.mutex);
@@ -236,9 +238,31 @@ static void testShutdownWithoutRegisteredCallback() {
     require(owner.shutdownAndJoin(), "idle looper shutdown not idempotent");
 }
 
+static void testPrepareFailureAndShutdown() {
+    require(platform.references == 0, "prior looper reference was not released");
+    failPrepare.store(true);
+    {
+        anvildesk_m8::DedicatedLooperThread owner;
+        require(!owner.initialized(), "failed looper preparation was accepted");
+        require(!owner.registerCallback(80, ALOOPER_EVENT_INPUT,
+                                        heldCallback, &owner),
+                "registration admitted without a prepared looper");
+        require(owner.shutdownAndJoin(), "failed-prepare worker could not join");
+        require(owner.shutdownAndJoin(), "failed-prepare shutdown not idempotent");
+        require(platform.references == 0, "failed preparation leaked a reference");
+    }
+    failPrepare.store(false);
+    // A failed worker must not poison a fresh, independent owner.
+    anvildesk_m8::DedicatedLooperThread recovered;
+    require(recovered.initialized(), "looper did not recover after prepare failure");
+    require(recovered.shutdownAndJoin(), "recovered looper could not join");
+    require(platform.references == 0, "recovered looper leaked a reference");
+}
+
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
+    testPrepareFailureAndShutdown();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -248,6 +272,7 @@ int main() {
               << "M8_OWNED_LOOPER_IDLE_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_INVALID_REGISTRATION_REJECTED=PASS\n"
               << "M8_OWNED_LOOPER_ADD_FD_FAILURE_RECOVERY=PASS\n"
+              << "M8_OWNED_LOOPER_PREPARE_FAILURE_RECOVERY=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

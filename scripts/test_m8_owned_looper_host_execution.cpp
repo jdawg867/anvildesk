@@ -19,6 +19,8 @@ struct ALooper {
     std::atomic<bool> failRemove{false};
     std::atomic<bool> failAdd{false};
     std::atomic<int> references{0};
+    std::atomic<int> acquireCalls{0};
+    std::atomic<int> releaseCalls{0};
     std::atomic<int> alreadyRemovedReturns{0};
     std::atomic<int> removeAttempts{0};
     std::thread::id preparingThread; // set by the worker in ALooper_prepare
@@ -41,8 +43,8 @@ ALooper* ALooper_prepare(int) {
     }
     return currentLooper;
 }
-void ALooper_acquire(ALooper* ptr) { ++ptr->references; }
-void ALooper_release(ALooper* ptr) { --ptr->references; }
+void ALooper_acquire(ALooper* ptr) { ++ptr->acquireCalls; ++ptr->references; }
+void ALooper_release(ALooper* ptr) { ++ptr->releaseCalls; --ptr->references; }
 void ALooper_wake(ALooper* ptr) {
     std::lock_guard<std::mutex> lock(ptr->mutex);
     ptr->wake = true;
@@ -138,6 +140,8 @@ static void testWakeJoinAndRemoveRetry() {
     auto released = releaseSignal.get_future().share();
     std::atomic<int> calls{0};
     std::atomic<bool> selfJoinRejected{false};
+    const int acquiredBefore = platform.acquireCalls.load();
+    const int releasedBefore = platform.releaseCalls.load();
     anvildesk_m8::DedicatedLooperThread owner;
     Userdata userdata{&calls, &entered, &callbackThread, &released,
                       &owner, &selfJoinRejected};
@@ -229,6 +233,9 @@ static void testWakeJoinAndRemoveRetry() {
     require(!lateRegistrationAccepted, "registration reopened after successful FD removal");
     require(calls == 1, "callback dispatched again after descriptor removal");
     require(platform.references == 0, "retained looper ref leaked");
+    require(platform.acquireCalls.load() == acquiredBefore + 1 &&
+            platform.releaseCalls.load() == releasedBefore + 1,
+            "callback shutdown did not balance exactly one acquire/release");
     require(!owner.registerCallback(52, ALOOPER_EVENT_INPUT, heldCallback, &userdata),
             "registration admitted after joined shutdown");
     require(owner.shutdownAndJoin(), "repeat shutdown not idempotent");
@@ -243,11 +250,16 @@ static void testShutdownWithoutRegisteredCallback() {
         platform.pending = false;
         platform.wake = false;
     }
+    const int acquiredBefore = platform.acquireCalls.load();
+    const int releasedBefore = platform.releaseCalls.load();
     anvildesk_m8::DedicatedLooperThread owner;
     require(owner.initialized(), "idle looper preparation failed");
     require(platform.references == 1, "idle looper reference was not acquired");
     require(owner.shutdownAndJoin(), "idle looper did not shutdown and join");
     require(platform.references == 0, "idle looper reference leaked");
+    require(platform.acquireCalls.load() == acquiredBefore + 1 &&
+            platform.releaseCalls.load() == releasedBefore + 1,
+            "idle shutdown did not balance exactly one acquire/release");
     require(!owner.registerCallback(70, ALOOPER_EVENT_INPUT,
                                     heldCallback, &owner),
             "idle looper admitted callback registration after join");
@@ -256,6 +268,8 @@ static void testShutdownWithoutRegisteredCallback() {
 
 static void testPrepareFailureAndShutdown() {
     require(platform.references == 0, "prior looper reference was not released");
+    const int acquiredBefore = platform.acquireCalls.load();
+    const int releasedBefore = platform.releaseCalls.load();
     failPrepare.store(true);
     {
         anvildesk_m8::DedicatedLooperThread owner;
@@ -266,6 +280,9 @@ static void testPrepareFailureAndShutdown() {
         require(owner.shutdownAndJoin(), "failed-prepare worker could not join");
         require(owner.shutdownAndJoin(), "failed-prepare shutdown not idempotent");
         require(platform.references == 0, "failed preparation leaked a reference");
+        require(platform.acquireCalls.load() == acquiredBefore &&
+                platform.releaseCalls.load() == releasedBefore,
+                "failed prepare unexpectedly acquired or released a looper ref");
     }
     failPrepare.store(false);
     // A failed worker must not poison a fresh, independent owner.
@@ -273,6 +290,9 @@ static void testPrepareFailureAndShutdown() {
     require(recovered.initialized(), "looper did not recover after prepare failure");
     require(recovered.shutdownAndJoin(), "recovered looper could not join");
     require(platform.references == 0, "recovered looper leaked a reference");
+    require(platform.acquireCalls.load() == acquiredBefore + 1 &&
+            platform.releaseCalls.load() == releasedBefore + 1,
+            "recovered worker did not balance exactly one acquire/release");
 }
 
 static int autoRemovingCallback(int, int, void* raw) {
@@ -283,6 +303,8 @@ static int autoRemovingCallback(int, int, void* raw) {
 static void testCallbackReturnZeroDeregistration() {
     require(platform.references == 0, "prior looper leaked a reference");
     const int baselineAlreadyRemoved = platform.alreadyRemovedReturns.load();
+    const int acquiredBefore = platform.acquireCalls.load();
+    const int releasedBefore = platform.releaseCalls.load();
     std::atomic<int> invocations{0};
     auto removed = platform.callbackAutoRemoved.get_future();
     anvildesk_m8::DedicatedLooperThread owner;
@@ -312,6 +334,9 @@ static void testCallbackReturnZeroDeregistration() {
             "repeated shutdown requested removal of already-removed FD");
     require(platform.references == 0,
             "repeated shutdown double-released or reacquired looper reference");
+    require(platform.acquireCalls.load() == acquiredBefore + 1 &&
+            platform.releaseCalls.load() == releasedBefore + 1,
+            "auto-removal repeated shutdown did not balance exactly one ref");
     require(invocations == 1, "auto-removing callback invoked unexpectedly");
     require(platform.references == 0, "callback auto-removal leaked looper ref");
     {
@@ -341,6 +366,7 @@ int main() {
               << "M8_OWNED_LOOPER_AUTO_REMOVE_REDELIVERY_REJECTED=PASS\n"
               << "M8_OWNED_LOOPER_REMOVE_FD_ZERO_ACCEPTED=PASS\n"
               << "M8_OWNED_LOOPER_AUTO_REMOVE_REJOIN_IDEMPOTENT=PASS\n"
+              << "M8_OWNED_LOOPER_EXACT_REFERENCE_BALANCE=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

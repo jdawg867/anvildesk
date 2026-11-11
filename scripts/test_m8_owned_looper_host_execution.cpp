@@ -286,6 +286,14 @@ static void testCallbackReturnZeroDeregistration() {
     triggerEvent();
     require(removed.wait_for(std::chrono::seconds(5)) == std::future_status::ready,
             "callback did not auto-remove its descriptor");
+    // A callback that returned zero has removed its own descriptor. It must
+    // not be replaced on the same owner, even before shutdown begins.
+    require(!owner.registerCallback(91, ALOOPER_EVENT_INPUT,
+                                    autoRemovingCallback, &invocations),
+            "replacement registration admitted after callback auto-removal");
+    // Queue another readiness notification after confirmed removal. Joining
+    // the owned poll worker establishes that this event was not dispatched.
+    triggerEvent();
     require(owner.shutdownAndJoin(), "shutdown failed after callback auto-removal");
     require(invocations == 1, "auto-removing callback invoked unexpectedly");
     require(platform.references == 0, "callback auto-removal leaked looper ref");
@@ -313,6 +321,7 @@ int main() {
               << "M8_OWNED_LOOPER_ADD_FD_FAILURE_RECOVERY=PASS\n"
               << "M8_OWNED_LOOPER_PREPARE_FAILURE_RECOVERY=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_AUTO_REMOVE=PASS\n"
+              << "M8_OWNED_LOOPER_AUTO_REMOVE_REDELIVERY_REJECTED=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

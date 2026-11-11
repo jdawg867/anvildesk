@@ -190,14 +190,37 @@ static void testWakeJoinAndRemoveRetry() {
             "registration admitted after joined shutdown");
     require(owner.shutdownAndJoin(), "repeat shutdown not idempotent");
 }
+static void testShutdownWithoutRegisteredCallback() {
+    // Exercise the no-FD lifecycle separately. The previous scenario has
+    // completed and no callback or external user retains the looper.
+    require(platform.references == 0, "prior test retained a looper reference");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered, "prior test retained a callback");
+        platform.pending = false;
+        platform.wake = false;
+    }
+    anvildesk_m8::DedicatedLooperThread owner;
+    require(owner.initialized(), "idle looper preparation failed");
+    require(platform.references == 1, "idle looper reference was not acquired");
+    require(owner.shutdownAndJoin(), "idle looper did not shutdown and join");
+    require(platform.references == 0, "idle looper reference leaked");
+    require(!owner.registerCallback(70, ALOOPER_EVENT_INPUT,
+                                    heldCallback, &owner),
+            "idle looper admitted callback registration after join");
+    require(owner.shutdownAndJoin(), "idle looper shutdown not idempotent");
+}
+
 int main() {
     testWakeJoinAndRemoveRetry();
+    testShutdownWithoutRegisteredCallback();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_PREPARE_THREAD_MATCH=PASS\n"
               << "M8_OWNED_LOOPER_POST_REMOVE_EVENT_SUPPRESSED=PASS\n"
               << "M8_OWNED_LOOPER_POST_REMOVE_REGISTRATION_REJECTED=PASS\n"
+              << "M8_OWNED_LOOPER_IDLE_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

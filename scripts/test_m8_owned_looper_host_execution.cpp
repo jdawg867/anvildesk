@@ -189,6 +189,12 @@ static void testWakeJoinAndRemoveRetry() {
         actualCallbackThread != callerThread;
     platform.failRemove.store(true);
     require(!owner.shutdownAndJoin(), "failed removal unexpectedly completed shutdown");
+    // A failed remove must not join or release the worker: the callback
+    // still owns stack-backed userdata and remains blocked until released.
+    require(platform.references.load() == 1 &&
+            platform.acquireCalls.load() == acquiredBefore + 1 &&
+            platform.releaseCalls.load() == releasedBefore,
+            "failed removal prematurely released the looper reference");
     require(!owner.registerCallback(51, ALOOPER_EVENT_INPUT, heldCallback, &userdata),
             "failed removal reopened registration");
     platform.failRemove.store(false);
@@ -212,7 +218,9 @@ static void testWakeJoinAndRemoveRetry() {
     // deliver it after the current callback returns and shutdown joins.
     triggerEvent();
     const bool waited = !completed.load();
-    const bool stillHeld = platform.references.load() == 1;
+    const bool stillHeld =
+        platform.references.load() == 1 &&
+        platform.releaseCalls.load() == releasedBefore;
     // A second external shutdown caller must serialize behind the first,
     // not race the worker join or release the looper while userdata is live.
     std::atomic<bool> competingCompleted{false};
@@ -367,6 +375,7 @@ int main() {
               << "M8_OWNED_LOOPER_REMOVE_FD_ZERO_ACCEPTED=PASS\n"
               << "M8_OWNED_LOOPER_AUTO_REMOVE_REJOIN_IDEMPOTENT=PASS\n"
               << "M8_OWNED_LOOPER_EXACT_REFERENCE_BALANCE=PASS\n"
+              << "M8_OWNED_LOOPER_REMOVE_FAILURE_RETAINS_REFERENCE=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

@@ -64,6 +64,13 @@ def audit(source: str) -> list[str]:
         raise ValueError("Pinned thread-local callback registration drift")
     if "this);" not in source:
         raise ValueError("Pinned callback raw userdata registration drift")
+    # Both operations may use ALooper_forThread() while executing on
+    # DIFFERENT threads. Matching the expression does not establish matching
+    # ALooper identity. Treat this as a positive detection of a blocker.
+    if "ALooper_addFd(ALooper_forThread(), fd," not in source or (
+        "ALooper_removeFd(ALooper_forThread(), connFd);" not in destructor
+    ):
+        raise ValueError("Pinned thread-local registration/teardown relationship drift")
     if source.count(CALLBACK_START) != 1 or source.count(CALLBACK_END) != 1:
         raise ValueError("Pinned xcallback body boundary drift")
     callback = source.split(CALLBACK_START, 1)[1].split(CALLBACK_END, 1)[0]
@@ -94,6 +101,8 @@ def audit(source: str) -> list[str]:
         "M8_RENDERER_CALLBACK_USES_STORED_JNI_ENV=observed",
         "M8_RENDERER_CALLBACK_JNI_THREAD_AFFINITY_VERIFIED=false",
         "M8_RENDERER_LOOPER_REGISTRATION_THREAD_OWNERSHIP_VERIFIED=false",
+        "M8_RENDERER_REGISTER_TEARDOWN_LOOPER_IDENTITY_VERIFIED=false",
+        "M8_RENDERER_RAW_USERDATA_FREE_AFTER_JOIN_VERIFIED=false",
         "M8_RENDERER_JAVA_POINTER_OWNERSHIP_VERIFIED=false",
         "M8_RENDERER_DOUBLE_DESTROY_PROTECTION_VERIFIED=false",
         "M8_RENDERER_CALLBACK_TEARDOWN_SYNCHRONIZATION_VERIFIED=false",

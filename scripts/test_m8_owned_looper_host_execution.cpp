@@ -17,6 +17,7 @@ struct ALooper {
     bool pending = false;
     bool registered = false;
     std::atomic<bool> failRemove{false};
+    std::atomic<bool> failAdd{false};
     std::atomic<int> references{0};
     std::thread::id preparingThread; // set by the worker in ALooper_prepare
     std::promise<void> removalSucceeded; // signals completed deregistration
@@ -44,7 +45,7 @@ void ALooper_wake(ALooper* ptr) {
 }
 int ALooper_addFd(ALooper* ptr, int fd, int, int, ALooper_callbackFunc cb, void* data) {
     std::lock_guard<std::mutex> lock(ptr->mutex);
-    if (ptr->registered) return -1;
+    if (ptr->registered || ptr->failAdd) return -1;
     ptr->fd = fd;
     ptr->callback = cb;
     ptr->userdata = data;
@@ -138,6 +139,16 @@ static void testWakeJoinAndRemoveRetry() {
         std::lock_guard<std::mutex> lock(platform.mutex);
         require(!platform.registered, "invalid registration mutated looper state");
     }
+    // Valid input can still fail inside ALooper_addFd. A rejected add must
+    // leave activeFd unset and permit a later successful registration.
+    platform.failAdd.store(true);
+    require(!owner.registerCallback(50, ALOOPER_EVENT_INPUT, heldCallback, &userdata),
+            "NDK addFd failure was reported as successful");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered, "failed NDK addFd changed registered state");
+    }
+    platform.failAdd.store(false);
     require(owner.registerCallback(50, ALOOPER_EVENT_INPUT, heldCallback, &userdata),
             "first FD registration failed");
     require(!owner.registerCallback(51, ALOOPER_EVENT_INPUT, heldCallback, &userdata),
@@ -236,6 +247,7 @@ int main() {
               << "M8_OWNED_LOOPER_POST_REMOVE_REGISTRATION_REJECTED=PASS\n"
               << "M8_OWNED_LOOPER_IDLE_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_INVALID_REGISTRATION_REJECTED=PASS\n"
+              << "M8_OWNED_LOOPER_ADD_FD_FAILURE_RECOVERY=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

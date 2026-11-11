@@ -187,8 +187,12 @@ static void testWakeJoinAndRemoveRetry() {
         preparedWorkerThread != std::thread::id{} &&
         actualCallbackThread == preparedWorkerThread &&
         actualCallbackThread != callerThread;
+    const int removeAttemptsBeforeFailures = platform.removeAttempts.load();
     platform.failRemove.store(true);
-    require(!owner.shutdownAndJoin(), "failed removal unexpectedly completed shutdown");
+    require(!owner.shutdownAndJoin(), "first failed removal unexpectedly completed shutdown");
+    require(!owner.shutdownAndJoin(), "second failed removal unexpectedly completed shutdown");
+    require(platform.removeAttempts.load() == removeAttemptsBeforeFailures + 2,
+            "failed removals did not each invoke the NDK removal path");
     // A failed remove must not join or release the worker: the callback
     // still owns stack-backed userdata and remains blocked until released.
     require(platform.references.load() == 1 &&
@@ -197,6 +201,11 @@ static void testWakeJoinAndRemoveRetry() {
             "failed removal prematurely released the looper reference");
     require(!owner.registerCallback(51, ALOOPER_EVENT_INPUT, heldCallback, &userdata),
             "failed removal reopened registration");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(platform.registered && platform.fd == 50,
+                "repeated failed removal lost the original callback registration");
+    }
     platform.failRemove.store(false);
     auto deregistered = platform.removalSucceeded.get_future();
     std::atomic<bool> completed{false};
@@ -376,6 +385,7 @@ int main() {
               << "M8_OWNED_LOOPER_AUTO_REMOVE_REJOIN_IDEMPOTENT=PASS\n"
               << "M8_OWNED_LOOPER_EXACT_REFERENCE_BALANCE=PASS\n"
               << "M8_OWNED_LOOPER_REMOVE_FAILURE_RETAINS_REFERENCE=PASS\n"
+              << "M8_OWNED_LOOPER_REPEATED_REMOVE_FAILURE_RECOVERY=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

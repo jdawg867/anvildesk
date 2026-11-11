@@ -19,6 +19,7 @@ struct ALooper {
     std::atomic<bool> failRemove{false};
     std::atomic<bool> failAdd{false};
     std::atomic<int> references{0};
+    std::atomic<int> alreadyRemovedReturns{0};
     std::thread::id preparingThread; // set by the worker in ALooper_prepare
     std::promise<void> removalSucceeded; // signals completed deregistration
     std::promise<void> callbackAutoRemoved; // callback returned zero
@@ -58,7 +59,10 @@ int ALooper_addFd(ALooper* ptr, int fd, int, int, ALooper_callbackFunc cb, void*
 int ALooper_removeFd(ALooper* ptr, int fd) {
     std::lock_guard<std::mutex> lock(ptr->mutex);
     if (ptr->failRemove) return -1;
-    if (!ptr->registered || ptr->fd != fd) return 0;
+    if (!ptr->registered || ptr->fd != fd) {
+        ++ptr->alreadyRemovedReturns;
+        return 0;
+    }
     ptr->registered = false;
     ptr->pending = false;
     ptr->removalSucceeded.set_value();
@@ -276,6 +280,7 @@ static int autoRemovingCallback(int, int, void* raw) {
 }
 static void testCallbackReturnZeroDeregistration() {
     require(platform.references == 0, "prior looper leaked a reference");
+    const int baselineAlreadyRemoved = platform.alreadyRemovedReturns.load();
     std::atomic<int> invocations{0};
     auto removed = platform.callbackAutoRemoved.get_future();
     anvildesk_m8::DedicatedLooperThread owner;
@@ -295,6 +300,8 @@ static void testCallbackReturnZeroDeregistration() {
     // the owned poll worker establishes that this event was not dispatched.
     triggerEvent();
     require(owner.shutdownAndJoin(), "shutdown failed after callback auto-removal");
+    require(platform.alreadyRemovedReturns.load() == baselineAlreadyRemoved + 1,
+            "shutdown did not accept the already-removed FD return code");
     require(invocations == 1, "auto-removing callback invoked unexpectedly");
     require(platform.references == 0, "callback auto-removal leaked looper ref");
     {
@@ -322,6 +329,7 @@ int main() {
               << "M8_OWNED_LOOPER_PREPARE_FAILURE_RECOVERY=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_AUTO_REMOVE=PASS\n"
               << "M8_OWNED_LOOPER_AUTO_REMOVE_REDELIVERY_REJECTED=PASS\n"
+              << "M8_OWNED_LOOPER_REMOVE_FD_ZERO_ACCEPTED=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

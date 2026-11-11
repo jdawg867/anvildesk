@@ -68,6 +68,8 @@ class RendererLifecycleAuditTests(unittest.TestCase):
         self.assertIn("M8_RENDERER_CALLBACK_USES_STORED_JNI_ENV=observed", report)
         self.assertIn("M8_RENDERER_CALLBACK_JNI_THREAD_AFFINITY_VERIFIED=false", report)
         self.assertIn("M8_RENDERER_LOOPER_REGISTRATION_THREAD_OWNERSHIP_VERIFIED=false", report)
+        self.assertIn("M8_RENDERER_REGISTER_TEARDOWN_LOOPER_IDENTITY_VERIFIED=false", report)
+        self.assertIn("M8_RENDERER_RAW_USERDATA_FREE_AFTER_JOIN_VERIFIED=false", report)
         self.assertIn("M8_RENDERER_CALLBACK_TEARDOWN_SYNCHRONIZATION_VERIFIED=false", report)
         self.assertIn("M8_NATIVE_LOAD_AUTHORIZED=false", report)
         self.assertIn("M8_RENDERER_RAW_LOOPER_USERDATA=observed", report)
@@ -79,6 +81,14 @@ class RendererLifecycleAuditTests(unittest.TestCase):
             mod.audit(SOURCE.replace(
                 "return ((LorieViewResources*) data)->xcallback(fd, events);", ""
             ))
+
+    def test_mismatched_teardown_thread_local_looper_rejected(self):
+        unsafe = SOURCE.replace(
+            "        ALooper_removeFd(ALooper_forThread(), connFd);",
+            "        ALooper_removeFd(otherLooper, connFd);",
+        )
+        with self.assertRaises(ValueError):
+            mod.audit(unsafe)
 
     def test_missing_thread_local_teardown_rejected(self):
         with self.assertRaises(ValueError):

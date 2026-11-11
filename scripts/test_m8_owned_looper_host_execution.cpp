@@ -124,6 +124,20 @@ static void testWakeJoinAndRemoveRetry() {
                       &owner, &selfJoinRejected};
     require(owner.initialized(), "looper prepare failed");
     require(platform.references == 1, "looper ref not held");
+    // Invalid registrations must leave admission open and must never install
+    // a descriptor in the fake NDK looper before a later valid request.
+    require(!owner.registerCallback(-1, ALOOPER_EVENT_INPUT, heldCallback, &userdata),
+            "negative FD registration accepted");
+    require(!owner.registerCallback(50, 0, heldCallback, &userdata),
+            "zero-event registration accepted");
+    require(!owner.registerCallback(50, ALOOPER_EVENT_INPUT, nullptr, &userdata),
+            "null callback registration accepted");
+    require(!owner.registerCallback(50, ALOOPER_EVENT_INPUT, heldCallback, nullptr),
+            "null userdata registration accepted");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered, "invalid registration mutated looper state");
+    }
     require(owner.registerCallback(50, ALOOPER_EVENT_INPUT, heldCallback, &userdata),
             "first FD registration failed");
     require(!owner.registerCallback(51, ALOOPER_EVENT_INPUT, heldCallback, &userdata),
@@ -221,6 +235,7 @@ int main() {
               << "M8_OWNED_LOOPER_POST_REMOVE_EVENT_SUPPRESSED=PASS\n"
               << "M8_OWNED_LOOPER_POST_REMOVE_REGISTRATION_REJECTED=PASS\n"
               << "M8_OWNED_LOOPER_IDLE_SHUTDOWN=PASS\n"
+              << "M8_OWNED_LOOPER_INVALID_REGISTRATION_REJECTED=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

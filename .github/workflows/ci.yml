@@ -275,6 +275,7 @@ jobs:
           grep -Fx 'M8_OWNED_LOOPER_ADD_FD_FAILURE_RECOVERY=PASS' m8-owned-looper-host-test.txt
           grep -Fx 'M8_OWNED_LOOPER_PREPARE_FAILURE_RECOVERY=PASS' m8-owned-looper-host-test.txt
           grep -Fx 'M8_OWNED_LOOPER_CALLBACK_AUTO_REMOVE=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_AUTO_REMOVE_REDELIVERY_REJECTED=PASS' m8-owned-looper-host-test.txt
           grep -Fx 'M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS' m8-owned-looper-host-test.txt
           grep -Fx 'M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false' m8-owned-looper-host-test.txt
           grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-owned-looper-host-test.txt

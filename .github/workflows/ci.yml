@@ -405,6 +405,32 @@ jobs:
           echo 'M8_UNIFIED_OWNER_RUNNER_PINNING=PASS'
           echo 'M8_UNIFIED_OWNER_DEVICE_EXECUTED=false'
 
+      - name: Exercise pinned M8 unified-owner artifact preflight without ADB
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The exact pinned artifact has 7-day retention. Report an expired
+          # artifact honestly, rather than silently using a different build.
+          expired="$(gh api repos/jdawg867/anvildesk/actions/artifacts/13989353189 --jq '.expired')"
+          if [[ "$expired" == "true" ]]; then
+            echo 'M8_UNIFIED_OWNER_ARTIFACT_PREFLIGHT_SKIPPED_EXPIRED=true'
+            echo 'M8_UNIFIED_OWNER_DEVICE_EXECUTED=false'
+            exit 0
+          fi
+          [[ "$expired" == "false" ]] || {
+            echo 'STOP: unexpected unified-owner artifact status' >&2
+            exit 1
+          }
+          bash scripts/run-m8-unified-owner-device-probe.sh --verify-artifact \
+            | tee m8-unified-owner-artifact-preflight.txt
+          grep -Fx 'M8_ARTIFACT_ONLY_PREFLIGHT=PASS' m8-unified-owner-artifact-preflight.txt
+          grep -Fx 'M8_ANDROID_DEVICE_PROBE_EXECUTED=false' m8-unified-owner-artifact-preflight.txt
+          echo 'M8_UNIFIED_OWNER_ARTIFACT_PREFLIGHT=PASS'
+          echo 'M8_UNIFIED_OWNER_DEVICE_EXECUTED=false'
+
       - name: Build isolated M8 unified-owner Android ARM64 probe (not executed)
         shell: bash
         run: |

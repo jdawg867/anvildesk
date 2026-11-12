@@ -459,12 +459,88 @@ static void testUnifiedOwnershipAdapterFailureAndRetry() {
                                       adapterCallback, &calls),
             "adapter admitted registration after join");
 }
+struct AdapterHeldCallbackContext {
+    std::promise<void>* entered;
+    std::shared_future<void>* release;
+    std::atomic<int>* calls;
+};
+static int heldAdapterCallback(int, int, void* raw) {
+    auto* context = static_cast<AdapterHeldCallbackContext*>(raw);
+    ++*context->calls;
+    context->entered->set_value();
+    context->release->wait();
+    return 1;
+}
+static void testUnifiedAdapterConcurrentShutdownAndActiveCallback() {
+    require(platform.references == 0, "prior adapter retained a looper reference");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered, "prior adapter left a callback registered");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    std::promise<void> entered, release;
+    auto callbackEntered = entered.get_future();
+    auto releaseSignal = release.get_future().share();
+    auto removed = platform.removalSucceeded.get_future();
+    std::atomic<int> calls{0};
+    AdapterHeldCallbackContext context{&entered, &releaseSignal, &calls};
+    anvildesk_m8::RendererOwnedLooperAdapter adapter;
+    require(adapter.registerCallback(200, 200, ALOOPER_EVENT_INPUT,
+                                     heldAdapterCallback, &context),
+            "concurrent adapter registration failed");
+    triggerEvent();
+    require(callbackEntered.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready, "concurrent adapter callback never entered");
+
+    std::atomic<bool> firstDone{false}, secondDone{false};
+    std::atomic<bool> firstResult{false}, secondResult{false};
+    std::thread first([&] {
+        firstResult = adapter.shutdownAndJoin();
+        firstDone = true;
+    });
+    // The real fake-NDK remove signals before the worker can join, because
+    // the active callback is held by the release promise.
+    removed.wait();
+    std::thread second([&] {
+        secondResult = adapter.shutdownAndJoin();
+        secondDone = true;
+    });
+    // Cleanup authorization is serialized with shutdown; it must not
+    // return early while the worker is still executing callback userdata.
+    std::promise<void> releaseAttempt;
+    auto attemptStarted = releaseAttempt.get_future();
+    std::atomic<bool> authorized{false}, authorizationFinished{false};
+    std::thread authorization([&] {
+        releaseAttempt.set_value();
+        authorized = adapter.releaseAuthorization();
+        authorizationFinished = true;
+    });
+    attemptStarted.wait();
+    const bool noEarlyCompletion =
+        !firstDone.load() && !secondDone.load() &&
+        !authorizationFinished.load() && platform.references.load() == 1;
+    release.set_value();
+    first.join();
+    second.join();
+    authorization.join();
+    require(noEarlyCompletion, "adapter completed teardown while callback was active");
+    require(firstResult && secondResult, "competing adapter shutdown failed");
+    require(authorized && authorizationFinished,
+            "adapter authorization did not serialize after worker join");
+    require(calls == 1, "adapter callback dispatched unexpectedly again");
+    require(platform.references == 0, "competing adapter shutdown leaked looper");
+    require(!adapter.releaseAuthorization(), "adapter authorized duplicate release");
+    require(adapter.shutdownAndJoin(), "competing adapter repeat shutdown failed");
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
     testPrepareFailureAndShutdown();
     testCallbackReturnZeroDeregistration();
     testUnifiedOwnershipAdapterFailureAndRetry();
+    testUnifiedAdapterConcurrentShutdownAndActiveCallback();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -485,6 +561,7 @@ int main() {
               << "M8_RENDERER_OWNERSHIP_FAKE_LOOPER_JOIN_BOUNDARY=PASS\n"
               << "M8_RENDERER_OWNERSHIP_FAILED_REMOVE_RETRY_JOIN=PASS\n"
               << "M8_RENDERER_UNIFIED_OWNER_FAILED_REMOVE_RETRY=PASS\n"
+              << "M8_RENDERER_UNIFIED_OWNER_CONCURRENT_CALLBACK_DRAIN=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

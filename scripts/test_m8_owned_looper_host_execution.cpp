@@ -417,6 +417,9 @@ static void testUnifiedOwnershipAdapterFailureAndRetry() {
     {
         std::lock_guard<std::mutex> lock(platform.mutex);
         require(!platform.registered, "previous looper left FD registered");
+        // The fake NDK looper is reused across scenarios. Reset its one-shot
+        // deregistration notification only after the preceding owner joined.
+        platform.removalSucceeded = std::promise<void>{};
         platform.pending = false;
         platform.wake = false;
     }

@@ -573,6 +573,54 @@ static void testUnifiedAdapterConcurrentShutdownAndActiveCallback() {
     require(!adapter.releaseAuthorization(), "adapter authorized duplicate release");
     require(adapter.shutdownAndJoin(), "competing adapter repeat shutdown failed");
 }
+static void testUnifiedAdapterPrepareFailureRecovery() {
+    require(platform.references == 0, "prior adapter leaked looper reference");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered, "prior adapter left callback registered");
+        platform.pending = false;
+        platform.wake = false;
+    }
+    const int acquisitions = platform.acquireCalls.load();
+    const int releases = platform.releaseCalls.load();
+    std::atomic<int> calls{0};
+    failPrepare.store(true);
+    {
+        anvildesk_m8::RendererOwnedLooperAdapter failed;
+        require(!failed.registerCallback(300, 300, ALOOPER_EVENT_INPUT,
+                                         adapterCallback, &calls),
+                "adapter accepted registration without prepared looper");
+        require(!failed.userdataReleaseEligible() &&
+                !failed.releaseAuthorization(),
+                "uninitialized adapter authorized userdata release");
+        require(failed.shutdownAndJoin(),
+                "uninitialized adapter failed to join worker");
+        require(failed.shutdownAndJoin(),
+                "uninitialized adapter repeat shutdown was not idempotent");
+        require(!failed.registerCallback(301, 301, ALOOPER_EVENT_INPUT,
+                                         adapterCallback, &calls),
+                "uninitialized adapter admitted registration after shutdown");
+        require(platform.references == 0 &&
+                platform.acquireCalls.load() == acquisitions &&
+                platform.releaseCalls.load() == releases,
+                "failed adapter initialization changed looper reference ownership");
+    }
+    failPrepare.store(false);
+    {
+        anvildesk_m8::RendererOwnedLooperAdapter recovered;
+        require(recovered.registerCallback(302, 302, ALOOPER_EVENT_INPUT,
+                                           adapterCallback, &calls),
+                "fresh adapter could not register after failed preparation");
+        require(recovered.shutdownAndJoin(), "recovered adapter could not join");
+        require(recovered.userdataReleaseEligible() &&
+                recovered.releaseAuthorization(),
+                "recovered adapter did not permit cleanup after join");
+        require(platform.references == 0 &&
+                platform.acquireCalls.load() == acquisitions + 1 &&
+                platform.releaseCalls.load() == releases + 1,
+                "recovered adapter did not balance its looper reference");
+    }
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -580,6 +628,7 @@ int main() {
     testCallbackReturnZeroDeregistration();
     testUnifiedOwnershipAdapterFailureAndRetry();
     testUnifiedAdapterConcurrentShutdownAndActiveCallback();
+    testUnifiedAdapterPrepareFailureRecovery();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -604,6 +653,7 @@ int main() {
               << "M8_RENDERER_UNIFIED_OWNER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_RENDERER_WORKER_MUTEX_OPERATIONS_REJECTED=PASS\n"
               << "M8_RENDERER_UNIFIED_OWNER_ADD_FAILURE_RECOVERY=PASS\n"
+              << "M8_RENDERER_UNIFIED_OWNER_PREPARE_FAILURE_RECOVERY=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

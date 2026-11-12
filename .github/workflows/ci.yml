@@ -393,6 +393,42 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Build isolated M8 unified-owner Android ARM64 probe (not executed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/27.2.12479018"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$bin/clang++"
+          "$bin/clang++" --target=aarch64-linux-android26 \
+            -std=c++17 -pthread -static-libstdc++ -O1 -Wall -Wextra -Werror \
+            -Wl,--no-undefined \
+            scripts/m8-android-unified-owner-device-probe.cpp \
+            -landroid -o /tmp/m8-android-unified-owner-device-probe
+          "$bin/llvm-readelf" -h /tmp/m8-android-unified-owner-device-probe \
+            | grep -Eq 'Machine:.*AArch64'
+          "$bin/llvm-readelf" -d /tmp/m8-android-unified-owner-device-probe \
+            | tee /tmp/m8-unified-owner-probe-dependencies.txt
+          grep -Fq 'libandroid.so' /tmp/m8-unified-owner-probe-dependencies.txt
+          if grep -Eq 'libc\\+\\+_shared\\.so|libstdc\\+\\+\\.so|GLIBC_' \
+               /tmp/m8-unified-owner-probe-dependencies.txt; then
+            echo 'STOP: unified owner probe has unbundled C++ dependency' >&2
+            exit 1
+          fi
+          grep -Fq 'M8_ANDROID_UNIFIED_OWNER_POST_JOIN_HEAP_FREE=PASS' \
+            scripts/m8-android-unified-owner-device-probe.cpp
+          echo 'M8_ANDROID_UNIFIED_OWNER_PROBE_ARM64_BUILD=PASS'
+          echo 'M8_ANDROID_UNIFIED_OWNER_DEVICE_EXECUTED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
+      - name: Retain isolated M8 unified owner ARM64 device probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-unified-owner-device-probe-arm64
+          path: /tmp/m8-android-unified-owner-device-probe
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Link isolated owned-looper ARM64 probe with real Android NDK
         shell: bash
         run: |

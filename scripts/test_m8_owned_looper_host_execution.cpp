@@ -671,6 +671,35 @@ static void testUnifiedAdapterCallbackAutoRemoval() {
                                       autoRemovingCallback, &calls),
             "adapter registered callback after auto-removal join");
 }
+static void testUnifiedAdapterShutdownBeforeRegistration() {
+    require(platform.references == 0, "prior adapter leaked looper ref");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered, "prior adapter left FD registered");
+        platform.pending = false;
+        platform.wake = false;
+    }
+    const int acquired = platform.acquireCalls.load();
+    const int released = platform.releaseCalls.load();
+    const int removes = platform.removeAttempts.load();
+    std::atomic<int> calls{0};
+    anvildesk_m8::RendererOwnedLooperAdapter adapter;
+    require(!adapter.userdataReleaseEligible() && !adapter.releaseAuthorization(),
+            "unused adapter authorized cleanup before shutdown");
+    require(adapter.shutdownAndJoin(), "unused adapter shutdown failed");
+    require(adapter.shutdownAndJoin(), "unused adapter repeat shutdown failed");
+    require(!adapter.registerCallback(500, 500, ALOOPER_EVENT_INPUT,
+                                      adapterCallback, &calls),
+            "unused adapter admitted callback after shutdown");
+    require(!adapter.userdataReleaseEligible() && !adapter.releaseAuthorization(),
+            "unused adapter authorized cleanup without ever owning userdata");
+    require(platform.references == 0 &&
+            platform.acquireCalls.load() == acquired + 1 &&
+            platform.releaseCalls.load() == released + 1,
+            "unused adapter shutdown did not balance one looper reference");
+    require(platform.removeAttempts.load() == removes,
+            "unused adapter attempted to remove an unregistered descriptor");
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -680,6 +709,7 @@ int main() {
     testUnifiedAdapterConcurrentShutdownAndActiveCallback();
     testUnifiedAdapterPrepareFailureRecovery();
     testUnifiedAdapterCallbackAutoRemoval();
+    testUnifiedAdapterShutdownBeforeRegistration();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -706,6 +736,7 @@ int main() {
               << "M8_RENDERER_UNIFIED_OWNER_ADD_FAILURE_RECOVERY=PASS\n"
               << "M8_RENDERER_UNIFIED_OWNER_PREPARE_FAILURE_RECOVERY=PASS\n"
               << "M8_RENDERER_UNIFIED_OWNER_CALLBACK_AUTO_REMOVAL=PASS\n"
+              << "M8_RENDERER_UNIFIED_OWNER_IDLE_FINAL_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

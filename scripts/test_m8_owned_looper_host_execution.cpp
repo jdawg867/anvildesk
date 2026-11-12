@@ -624,6 +624,53 @@ static void testUnifiedAdapterPrepareFailureRecovery() {
                 "recovered adapter did not balance its looper reference");
     }
 }
+static void testUnifiedAdapterCallbackAutoRemoval() {
+    require(platform.references == 0, "prior adapter leaked looper ref");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered, "prior adapter left FD registered");
+        platform.callbackAutoRemoved = std::promise<void>{};
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    const int alreadyRemoved = platform.alreadyRemovedReturns.load();
+    const int acquired = platform.acquireCalls.load();
+    const int released = platform.releaseCalls.load();
+    std::atomic<int> calls{0};
+    auto autoRemoved = platform.callbackAutoRemoved.get_future();
+    anvildesk_m8::RendererOwnedLooperAdapter adapter;
+    require(adapter.registerCallback(400, 400, ALOOPER_EVENT_INPUT,
+                                     autoRemovingCallback, &calls),
+            "adapter refused auto-remove callback registration");
+    triggerEvent();
+    require(autoRemoved.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "adapter callback did not auto-remove FD");
+    require(calls == 1, "adapter callback auto-removal invoked incorrect count");
+    require(!adapter.registerCallback(401, 401, ALOOPER_EVENT_INPUT,
+                                      autoRemovingCallback, &calls),
+            "adapter replaced callback after auto-removal");
+    require(!adapter.userdataReleaseEligible() && !adapter.releaseAuthorization(),
+            "adapter released userdata before auto-removal worker join");
+    triggerEvent();
+    require(adapter.shutdownAndJoin(),
+            "adapter failed to join after callback auto-removal");
+    require(platform.alreadyRemovedReturns.load() == alreadyRemoved + 1,
+            "adapter shutdown did not accept already-removed descriptor");
+    require(platform.references == 0 &&
+            platform.acquireCalls.load() == acquired + 1 &&
+            platform.releaseCalls.load() == released + 1,
+            "auto-removal adapter leaked or double-released looper reference");
+    require(calls == 1, "adapter dispatched pending event after auto-removal");
+    require(adapter.userdataReleaseEligible() && adapter.releaseAuthorization(),
+            "adapter failed to authorize cleanup after auto-removal join");
+    require(!adapter.releaseAuthorization(), "adapter allowed double cleanup");
+    require(adapter.shutdownAndJoin(), "adapter repeated auto-removal shutdown failed");
+    require(!adapter.registerCallback(402, 402, ALOOPER_EVENT_INPUT,
+                                      autoRemovingCallback, &calls),
+            "adapter registered callback after auto-removal join");
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -632,6 +679,7 @@ int main() {
     testUnifiedOwnershipAdapterFailureAndRetry();
     testUnifiedAdapterConcurrentShutdownAndActiveCallback();
     testUnifiedAdapterPrepareFailureRecovery();
+    testUnifiedAdapterCallbackAutoRemoval();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -657,6 +705,7 @@ int main() {
               << "M8_RENDERER_WORKER_MUTEX_OPERATIONS_REJECTED=PASS\n"
               << "M8_RENDERER_UNIFIED_OWNER_ADD_FAILURE_RECOVERY=PASS\n"
               << "M8_RENDERER_UNIFIED_OWNER_PREPARE_FAILURE_RECOVERY=PASS\n"
+              << "M8_RENDERER_UNIFIED_OWNER_CALLBACK_AUTO_REMOVAL=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

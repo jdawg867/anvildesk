@@ -463,12 +463,21 @@ struct AdapterHeldCallbackContext {
     std::promise<void>* entered;
     std::shared_future<void>* release;
     std::atomic<int>* calls;
+    anvildesk_m8::RendererOwnedLooperAdapter* adapter;
+    std::atomic<bool>* rejectedSelfJoin;
 };
 static int heldAdapterCallback(int, int, void* raw) {
     auto* context = static_cast<AdapterHeldCallbackContext*>(raw);
     ++*context->calls;
     context->entered->set_value();
     context->release->wait();
+    // An external thread can hold the adapter shutdown mutex while joining
+    // this worker. Reject without waiting on that mutex or corrupting model.
+    try {
+        context->adapter->shutdownAndJoin();
+    } catch (const std::logic_error&) {
+        context->rejectedSelfJoin->store(true);
+    }
     return 1;
 }
 static void testUnifiedAdapterConcurrentShutdownAndActiveCallback() {
@@ -485,8 +494,10 @@ static void testUnifiedAdapterConcurrentShutdownAndActiveCallback() {
     auto releaseSignal = release.get_future().share();
     auto removed = platform.removalSucceeded.get_future();
     std::atomic<int> calls{0};
-    AdapterHeldCallbackContext context{&entered, &releaseSignal, &calls};
+    std::atomic<bool> rejectedSelfJoin{false};
     anvildesk_m8::RendererOwnedLooperAdapter adapter;
+    AdapterHeldCallbackContext context{&entered, &releaseSignal, &calls,
+                                       &adapter, &rejectedSelfJoin};
     require(adapter.registerCallback(200, 200, ALOOPER_EVENT_INPUT,
                                      heldAdapterCallback, &context),
             "concurrent adapter registration failed");
@@ -526,6 +537,7 @@ static void testUnifiedAdapterConcurrentShutdownAndActiveCallback() {
     second.join();
     authorization.join();
     require(noEarlyCompletion, "adapter completed teardown while callback was active");
+    require(rejectedSelfJoin, "adapter did not reject self-join from active callback");
     require(firstResult && secondResult, "competing adapter shutdown failed");
     require(authorized && authorizationFinished,
             "adapter authorization did not serialize after worker join");
@@ -562,6 +574,7 @@ int main() {
               << "M8_RENDERER_OWNERSHIP_FAILED_REMOVE_RETRY_JOIN=PASS\n"
               << "M8_RENDERER_UNIFIED_OWNER_FAILED_REMOVE_RETRY=PASS\n"
               << "M8_RENDERER_UNIFIED_OWNER_CONCURRENT_CALLBACK_DRAIN=PASS\n"
+              << "M8_RENDERER_UNIFIED_OWNER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

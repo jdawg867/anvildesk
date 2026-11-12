@@ -85,6 +85,12 @@ public:
         return true;
     }
 
+    // Safe without taking any shutdown lock. An owned callback must be
+    // rejected before an adapter can block on a competing worker join.
+    bool onWorkerThread() const noexcept {
+        return std::this_thread::get_id() == workerId_;
+    }
+
     bool initialized() const {
         std::lock_guard<std::mutex> lock(mutex_);
         return prepared_;

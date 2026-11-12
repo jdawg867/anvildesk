@@ -141,6 +141,9 @@ static void testWakeJoinAndRemoveRetry() {
     auto released = releaseSignal.get_future().share();
     std::atomic<int> calls{0};
     std::atomic<bool> selfJoinRejected{false};
+    anvildesk_m8::RendererCallbackOwnershipModel ownership;
+    require(ownership.registerSession(50), "failed-retry model registration failed");
+    require(ownership.callbackMayEnter(50), "failed-retry model callback admission closed");
     const int acquiredBefore = platform.acquireCalls.load();
     const int releasedBefore = platform.releaseCalls.load();
     anvildesk_m8::DedicatedLooperThread owner;
@@ -189,11 +192,20 @@ static void testWakeJoinAndRemoveRetry() {
         actualCallbackThread == preparedWorkerThread &&
         actualCallbackThread != callerThread;
     const int removeAttemptsBeforeFailures = platform.removeAttempts.load();
+    require(ownership.beginShutdown(), "failed-retry model shutdown admission failed");
+    require(!ownership.callbackMayEnter(50),
+            "failed-retry model admitted callback after stop request");
     platform.failRemove.store(true);
     require(!owner.shutdownAndJoin(), "first failed removal unexpectedly completed shutdown");
     require(!owner.shutdownAndJoin(), "second failed removal unexpectedly completed shutdown");
     require(platform.removeAttempts.load() == removeAttemptsBeforeFailures + 2,
             "failed removals did not each invoke the NDK removal path");
+    require(ownership.recordRemoveFailure(), "failed-retry model did not record removal error");
+    require(!ownership.mayFreeUserdata() && !ownership.releaseUserdata(),
+            "failed removal permitted premature userdata release");
+    require(!ownership.acknowledgeWorkerJoined(),
+            "failed removal permitted an unverified join transition");
+    require(ownership.retryRemoval(), "failed-retry model could not retry removal");
     // A failed remove must not join or release the worker: the callback
     // still owns stack-backed userdata and remains blocked until released.
     require(platform.references.load() == 1 &&
@@ -214,6 +226,10 @@ static void testWakeJoinAndRemoveRetry() {
     // Wait for REAL proof that the retry deregistered the FD, not merely
     // for the shutdown thread to be scheduled. The callback is still blocked.
     deregistered.wait();
+    require(ownership.recordRemoveSuccessOrAbsent(),
+            "failed-retry model did not record successful removal");
+    require(!ownership.mayFreeUserdata() && !ownership.releaseUserdata(),
+            "successful removal without join permitted userdata release");
     // Registration from a different external thread, after confirmed FD
     // removal but before callback release, must not reopen admission.
     std::atomic<bool> lateRegistrationAccepted{false};
@@ -241,6 +257,13 @@ static void testWakeJoinAndRemoveRetry() {
     releaseSignal.set_value();
     shutdown.join();
     competingShutdown.join();
+    require(completed && competingCompleted,
+            "failed-retry worker join did not complete");
+    require(ownership.acknowledgeWorkerJoined(),
+            "failed-retry model rejected completed worker join");
+    require(ownership.mayFreeUserdata() && ownership.releaseUserdata(),
+            "failed-retry model did not release after worker join");
+    require(!ownership.releaseUserdata(), "failed-retry model allowed double release");
     require(dispatchedOnWorker, "callback did not run on the looper preparing thread");
     require(selfJoinRejected, "owned worker failed to reject self-join");
     require(stillHeld, "looper reference released before callback completed");
@@ -407,6 +430,7 @@ int main() {
               << "M8_OWNED_LOOPER_REMOVE_FAILURE_RETAINS_REFERENCE=PASS\n"
               << "M8_OWNED_LOOPER_REPEATED_REMOVE_FAILURE_RECOVERY=PASS\n"
               << "M8_RENDERER_OWNERSHIP_FAKE_LOOPER_JOIN_BOUNDARY=PASS\n"
+              << "M8_RENDERER_OWNERSHIP_FAILED_REMOVE_RETRY_JOIN=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

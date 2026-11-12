@@ -6,6 +6,7 @@
 #include <future>
 #include <iostream>
 #include <mutex>
+#include <memory>
 #include <stdexcept>
 #include <thread>
 #include "m8-owned-looper-test-shim/android/looper.h"
@@ -70,6 +71,8 @@ int ALooper_removeFd(ALooper* ptr, int fd) {
     }
     ptr->registered = false;
     ptr->pending = false;
+    ptr->callback = nullptr;
+    ptr->userdata = nullptr;
     ptr->removalSucceeded.set_value();
     return 1;
 }
@@ -94,6 +97,8 @@ int ALooper_pollOnce(int, int*, int*, void**) {
                 ptr->userdata == data) {
                 ptr->registered = false;
                 ptr->pending = false;
+                ptr->callback = nullptr;
+                ptr->userdata = nullptr;
                 ptr->callbackAutoRemoved.set_value();
             }
         }
@@ -700,6 +705,70 @@ static void testUnifiedAdapterShutdownBeforeRegistration() {
     require(platform.removeAttempts.load() == removes,
             "unused adapter attempted to remove an unregistered descriptor");
 }
+struct HeapAdapterCallbackContext {
+    std::atomic<int>* calls;
+    std::promise<void>* entered;
+    std::shared_future<void>* release;
+};
+static int heapAdapterCallback(int, int, void* raw) {
+    auto* context = static_cast<HeapAdapterCallbackContext*>(raw);
+    ++*context->calls;
+    context->entered->set_value();
+    context->release->wait();
+    return 1;
+}
+static void testUnifiedAdapterHeapUserdataLifetime() {
+    require(platform.references == 0, "prior adapter leaked a looper ref");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered, "prior adapter left a callback registered");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+        require(platform.callback == nullptr && platform.userdata == nullptr,
+                "fake platform retained stale callback userdata after removal");
+    }
+    std::atomic<int> calls{0};
+    std::promise<void> entered, release;
+    auto enteredFuture = entered.get_future();
+    auto callbackRelease = release.get_future().share();
+    auto context = std::make_unique<HeapAdapterCallbackContext>(
+        HeapAdapterCallbackContext{&calls, &entered, &callbackRelease});
+    anvildesk_m8::RendererOwnedLooperAdapter adapter;
+    require(adapter.registerCallback(600, 600, ALOOPER_EVENT_INPUT,
+                                     heapAdapterCallback, context.get()),
+            "heap callback registration failed");
+    triggerEvent();
+    require(enteredFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "heap callback never started");
+    std::atomic<bool> joined{false};
+    std::thread teardown([&] { joined = adapter.shutdownAndJoin(); });
+    auto removed = platform.removalSucceeded.get_future();
+    require(removed.wait_for(std::chrono::seconds(5)) == std::future_status::ready,
+            "heap callback was not removed");
+    require(!joined && !adapter.userdataReleaseEligible(),
+            "heap context became releasable before worker joined");
+    // Keep the heap allocation valid until the callback is unblocked and
+    // the owned worker has completed its join.
+    release.set_value();
+    teardown.join();
+    require(joined, "heap callback owner did not join");
+    require(adapter.userdataReleaseEligible() && adapter.releaseAuthorization(),
+            "heap userdata cleanup was not authorized after join");
+    context.reset();
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.callback == nullptr &&
+                platform.userdata == nullptr,
+                "fake NDK retained callback userdata after shutdown");
+    }
+    triggerEvent(); // no worker exists to dereference the freed heap object
+    require(calls == 1, "callback invoked after userdata was freed");
+    require(!adapter.releaseAuthorization(), "duplicate heap userdata cleanup accepted");
+    require(adapter.shutdownAndJoin(), "heap owner repeated shutdown failed");
+    require(platform.references == 0, "heap owner leaked looper reference");
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -710,6 +779,7 @@ int main() {
     testUnifiedAdapterPrepareFailureRecovery();
     testUnifiedAdapterCallbackAutoRemoval();
     testUnifiedAdapterShutdownBeforeRegistration();
+    testUnifiedAdapterHeapUserdataLifetime();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -737,6 +807,7 @@ int main() {
               << "M8_RENDERER_UNIFIED_OWNER_PREPARE_FAILURE_RECOVERY=PASS\n"
               << "M8_RENDERER_UNIFIED_OWNER_CALLBACK_AUTO_REMOVAL=PASS\n"
               << "M8_RENDERER_UNIFIED_OWNER_IDLE_FINAL_SHUTDOWN=PASS\n"
+              << "M8_RENDERER_UNIFIED_OWNER_HEAP_USERDATA_POST_JOIN_FREE=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

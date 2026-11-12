@@ -6,6 +6,7 @@
 #include "m8-renderer-callback-ownership-model.h"
 #include <cstdint>
 #include <mutex>
+#include <stdexcept>
 
 namespace anvildesk_m8 {
 
@@ -17,6 +18,8 @@ public:
 
     bool registerCallback(std::uint64_t generation, int fd, int events,
                           ALooper_callbackFunc callback, void* userdata) {
+        // A callback must never block behind an external join of itself.
+        if (looper_.onWorkerThread()) return false;
         std::lock_guard<std::mutex> lock(mutex_);
         if (!looper_.initialized() || model_.state() !=
             RendererCallbackOwnershipModel::State::Empty || generation == 0)
@@ -63,11 +66,15 @@ public:
     // An authorization token only. Freeing caller-owned userdata and JNI
     // objects remains an external responsibility after callback quiescence.
     bool releaseAuthorization() {
+        // A callback cannot authorize freeing its own userdata, nor wait
+        // behind an external shutdown that is joining that callback.
+        if (looper_.onWorkerThread()) return false;
         std::lock_guard<std::mutex> lock(mutex_);
         return model_.releaseUserdata();
     }
 
     bool userdataReleaseEligible() const {
+        if (looper_.onWorkerThread()) return false;
         std::lock_guard<std::mutex> lock(mutex_);
         return model_.mayFreeUserdata();
     }

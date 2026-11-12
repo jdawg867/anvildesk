@@ -429,9 +429,23 @@ static void testUnifiedOwnershipAdapterFailureAndRetry() {
     require(!adapter.registerCallback(0, 100, ALOOPER_EVENT_INPUT,
                                       adapterCallback, &calls),
             "adapter admitted invalid generation");
+    const int attemptsBeforeFailure = platform.removeAttempts.load();
+    platform.failAdd.store(true);
+    require(!adapter.registerCallback(100, 100, ALOOPER_EVENT_INPUT,
+                                      adapterCallback, &calls),
+            "adapter accepted NDK addFd failure");
+    require(!adapter.userdataReleaseEligible() && !adapter.releaseAuthorization(),
+            "failed addFd created a releasable ownership record");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered, "failed addFd registered a platform callback");
+    }
+    require(platform.removeAttempts.load() == attemptsBeforeFailure,
+            "failed addFd unexpectedly attempted FD removal");
+    platform.failAdd.store(false);
     require(adapter.registerCallback(100, 100, ALOOPER_EVENT_INPUT,
                                      adapterCallback, &calls),
-            "adapter refused valid callback");
+            "adapter refused valid callback after NDK addFd failure");
     require(!adapter.registerCallback(101, 101, ALOOPER_EVENT_INPUT,
                                       adapterCallback, &calls),
             "adapter accepted replacement registration");
@@ -589,6 +603,7 @@ int main() {
               << "M8_RENDERER_UNIFIED_OWNER_CONCURRENT_CALLBACK_DRAIN=PASS\n"
               << "M8_RENDERER_UNIFIED_OWNER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_RENDERER_WORKER_MUTEX_OPERATIONS_REJECTED=PASS\n"
+              << "M8_RENDERER_UNIFIED_OWNER_ADD_FAILURE_RECOVERY=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

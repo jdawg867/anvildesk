@@ -288,6 +288,7 @@ jobs:
           grep -Fx 'M8_RENDERER_UNIFIED_OWNER_SELF_JOIN_REJECTED=PASS' m8-owned-looper-host-test.txt
           grep -Fx 'M8_RENDERER_WORKER_MUTEX_OPERATIONS_REJECTED=PASS' m8-owned-looper-host-test.txt
           grep -Fx 'M8_RENDERER_UNIFIED_OWNER_ADD_FAILURE_RECOVERY=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_UNIFIED_OWNER_PREPARE_FAILURE_RECOVERY=PASS' m8-owned-looper-host-test.txt
           grep -Fx 'M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS' m8-owned-looper-host-test.txt
           grep -Fx 'M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false' m8-owned-looper-host-test.txt
           grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-owned-looper-host-test.txt

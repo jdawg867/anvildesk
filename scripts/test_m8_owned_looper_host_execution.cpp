@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <thread>
 #include "m8-owned-looper-test-shim/android/looper.h"
+#include "m8-renderer-callback-ownership-model.h"
 
 struct ALooper {
     std::mutex mutex;
@@ -323,6 +324,9 @@ static void testCallbackReturnZeroDeregistration() {
     const int acquiredBefore = platform.acquireCalls.load();
     const int releasedBefore = platform.releaseCalls.load();
     std::atomic<int> invocations{0};
+    anvildesk_m8::RendererCallbackOwnershipModel ownership;
+    require(ownership.registerSession(90), "ownership registration failed");
+    require(ownership.callbackMayEnter(90), "ownership callback admission failed");
     auto removed = platform.callbackAutoRemoved.get_future();
     anvildesk_m8::DedicatedLooperThread owner;
     require(owner.initialized(), "auto-removal looper preparation failed");
@@ -332,6 +336,14 @@ static void testCallbackReturnZeroDeregistration() {
     triggerEvent();
     require(removed.wait_for(std::chrono::seconds(5)) == std::future_status::ready,
             "callback did not auto-remove its descriptor");
+    require(ownership.beginShutdown(), "ownership stop admission failed");
+    require(!ownership.callbackMayEnter(90), "ownership admitted callback during shutdown");
+    require(ownership.recordRemoveSuccessOrAbsent(),
+            "ownership failed to record callback auto-removal");
+    require(!ownership.mayFreeUserdata(),
+            "ownership allowed userdata free before real worker join");
+    require(!ownership.releaseUserdata(),
+            "ownership released userdata before real worker join");
     // A callback that returned zero has removed its own descriptor. It must
     // not be replaced on the same owner, even before shutdown begins.
     require(!owner.registerCallback(91, ALOOPER_EVENT_INPUT,
@@ -341,6 +353,14 @@ static void testCallbackReturnZeroDeregistration() {
     // the owned poll worker establishes that this event was not dispatched.
     triggerEvent();
     require(owner.shutdownAndJoin(), "shutdown failed after callback auto-removal");
+    // A real worker join (albeit under a fake NDK host platform) is the only
+    // point at which this test acknowledges the ownership join transition.
+    require(ownership.acknowledgeWorkerJoined(),
+            "ownership did not accept verified worker join");
+    require(ownership.mayFreeUserdata(),
+            "ownership failed to allow userdata cleanup after worker join");
+    require(ownership.releaseUserdata(), "ownership cleanup transition failed");
+    require(!ownership.releaseUserdata(), "ownership permitted double release");
     require(platform.alreadyRemovedReturns.load() == baselineAlreadyRemoved + 1,
             "shutdown did not accept the already-removed FD return code");
     const int attemptsAfterJoin = platform.removeAttempts.load();
@@ -386,6 +406,7 @@ int main() {
               << "M8_OWNED_LOOPER_EXACT_REFERENCE_BALANCE=PASS\n"
               << "M8_OWNED_LOOPER_REMOVE_FAILURE_RETAINS_REFERENCE=PASS\n"
               << "M8_OWNED_LOOPER_REPEATED_REMOVE_FAILURE_RECOVERY=PASS\n"
+              << "M8_RENDERER_OWNERSHIP_FAKE_LOOPER_JOIN_BOUNDARY=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

@@ -30,6 +30,11 @@ public:
     // External shutdown only; never call from an owned-thread callback.
     // A removal failure retains the FD, worker and userdata for retry.
     bool shutdownAndJoin() {
+        // Check BEFORE taking mutex_: an external caller may already hold
+        // that mutex while joining this callback's worker. Otherwise a
+        // self-join attempt deadlocks and can poison the ownership state.
+        if (looper_.onWorkerThread())
+            throw std::logic_error("renderer callback owner cannot join itself");
         std::lock_guard<std::mutex> lock(mutex_);
         using State = RendererCallbackOwnershipModel::State;
         const auto state = model_.state();

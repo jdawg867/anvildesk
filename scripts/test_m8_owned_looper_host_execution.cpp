@@ -102,6 +102,7 @@ int ALooper_pollOnce(int, int*, int*, void**) {
     return 0;
 }
 #include "m8-android-owned-looper-thread.cpp"
+#include "m8-renderer-owned-looper-adapter.h"
 static void require(bool ok, const char* why) {
     if (!ok) throw std::runtime_error(why);
 }
@@ -407,11 +408,60 @@ static void testCallbackReturnZeroDeregistration() {
                                     autoRemovingCallback, &invocations),
             "post-join registration admitted after callback auto-removal");
 }
+static int adapterCallback(int, int, void* raw) {
+    ++*static_cast<std::atomic<int>*>(raw);
+    return 1;
+}
+static void testUnifiedOwnershipAdapterFailureAndRetry() {
+    require(platform.references == 0, "previous looper owner leaked reference");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered, "previous looper left FD registered");
+        platform.pending = false;
+        platform.wake = false;
+    }
+    std::atomic<int> calls{0};
+    anvildesk_m8::RendererOwnedLooperAdapter adapter;
+    require(!adapter.userdataReleaseEligible(), "new adapter freed absent userdata");
+    require(!adapter.registerCallback(0, 100, ALOOPER_EVENT_INPUT,
+                                      adapterCallback, &calls),
+            "adapter admitted invalid generation");
+    require(adapter.registerCallback(100, 100, ALOOPER_EVENT_INPUT,
+                                     adapterCallback, &calls),
+            "adapter refused valid callback");
+    require(!adapter.registerCallback(101, 101, ALOOPER_EVENT_INPUT,
+                                      adapterCallback, &calls),
+            "adapter accepted replacement registration");
+    triggerEvent();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (calls.load() == 0 && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    require(calls == 1, "adapter callback did not execute on worker");
+    platform.failRemove.store(true);
+    require(!adapter.shutdownAndJoin(), "adapter accepted failed FD removal");
+    require(!adapter.userdataReleaseEligible() && !adapter.releaseAuthorization(),
+            "failed adapter shutdown authorized userdata release");
+    require(platform.references == 1, "failed adapter shutdown released looper");
+    require(!adapter.registerCallback(102, 102, ALOOPER_EVENT_INPUT,
+                                      adapterCallback, &calls),
+            "failed adapter shutdown reopened registration");
+    platform.failRemove.store(false);
+    require(adapter.shutdownAndJoin(), "adapter removal retry failed to join");
+    require(platform.references == 0, "adapter retry leaked looper reference");
+    require(adapter.userdataReleaseEligible(), "adapter join did not authorize cleanup");
+    require(adapter.releaseAuthorization(), "adapter failed cleanup authorization");
+    require(!adapter.releaseAuthorization(), "adapter authorized repeated cleanup");
+    require(adapter.shutdownAndJoin(), "adapter repeated shutdown not idempotent");
+    require(!adapter.registerCallback(103, 103, ALOOPER_EVENT_INPUT,
+                                      adapterCallback, &calls),
+            "adapter admitted registration after join");
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
     testPrepareFailureAndShutdown();
     testCallbackReturnZeroDeregistration();
+    testUnifiedOwnershipAdapterFailureAndRetry();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -431,6 +481,7 @@ int main() {
               << "M8_OWNED_LOOPER_REPEATED_REMOVE_FAILURE_RECOVERY=PASS\n"
               << "M8_RENDERER_OWNERSHIP_FAKE_LOOPER_JOIN_BOUNDARY=PASS\n"
               << "M8_RENDERER_OWNERSHIP_FAILED_REMOVE_RETRY_JOIN=PASS\n"
+              << "M8_RENDERER_UNIFIED_OWNER_FAILED_REMOVE_RETRY=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

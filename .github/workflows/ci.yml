@@ -393,6 +393,18 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Validate pinned Samsung unified-owner probe runner (not executed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/run-m8-unified-owner-device-probe.sh
+          grep -Fqx 'RUN_ID="43319679610"' scripts/run-m8-unified-owner-device-probe.sh
+          grep -Fqx 'EXPECTED_SHA="8a9767971fd21689bd16e70b4c8a4510f737779a"' scripts/run-m8-unified-owner-device-probe.sh
+          grep -Fqx 'EXPECTED_ARTIFACT_ID="13989353189"' scripts/run-m8-unified-owner-device-probe.sh
+          grep -Fqx 'EXPECTED_ARTIFACT_DIGEST="sha256:bbac900b551b143add444fb0904fb37af2a5af2254415a4695a90ab6273288c7"' scripts/run-m8-unified-owner-device-probe.sh
+          echo 'M8_UNIFIED_OWNER_RUNNER_PINNING=PASS'
+          echo 'M8_UNIFIED_OWNER_DEVICE_EXECUTED=false'
+
       - name: Build isolated M8 unified-owner Android ARM64 probe (not executed)
         shell: bash
         run: |

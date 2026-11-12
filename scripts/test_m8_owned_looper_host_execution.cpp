@@ -578,6 +578,9 @@ static void testUnifiedAdapterPrepareFailureRecovery() {
     {
         std::lock_guard<std::mutex> lock(platform.mutex);
         require(!platform.registered, "prior adapter left callback registered");
+        // The recovered adapter will remove a new FD. Retire the prior
+        // scenario's completed one-shot removal signal after its worker joined.
+        platform.removalSucceeded = std::promise<void>{};
         platform.pending = false;
         platform.wake = false;
     }

@@ -1033,6 +1033,84 @@ static void testRendererSessionCompositeFailedRemovalClosesCallbackAdmission() {
                                     autoRemovingCallback, &calls),
             "composite reopened callback admission following failed removal");
 }
+static void testRendererSessionCompositeAddFailureAndIdleClose() {
+    require(platform.references == 0, "prior composite leaked reference");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered, "prior composite left FD registered");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+        require(platform.userdata == nullptr, "prior composite left platform userdata");
+    }
+    const int acquired = platform.acquireCalls.load();
+    const int released = platform.releaseCalls.load();
+    std::atomic<int> calls{0};
+    {
+        anvildesk_m8::RendererSessionOwnedLooper owner;
+        require(!owner.registerCallback(1200, -1, ALOOPER_EVENT_INPUT,
+                                        autoRemovingCallback, &calls),
+                "composite accepted invalid descriptor");
+        require(!owner.registerCallback(1200, 1200, ALOOPER_EVENT_INPUT,
+                                        nullptr, &calls),
+                "composite accepted null callback");
+        require(!owner.registerCallback(1200, 1200, ALOOPER_EVENT_INPUT,
+                                        autoRemovingCallback, nullptr),
+                "composite accepted null client userdata");
+        platform.failAdd = true;
+        require(!owner.registerCallback(1200, 1200, ALOOPER_EVENT_INPUT,
+                                        autoRemovingCallback, &calls),
+                "composite accepted failed platform addFd");
+        require(!owner.holdsCallbackContext(),
+                "composite retained context after failed addFd");
+        platform.failAdd = false;
+        require(owner.registerCallback(1201, 1200, ALOOPER_EVENT_INPUT,
+                                       autoRemovingCallback, &calls),
+                "composite failed to register after transient addFd failure");
+        require(owner.holdsCallbackContext(),
+                "composite failed to retain successful callback context");
+        require(owner.shutdownAndJoin(), "composite failed normal shutdown");
+        require(!owner.holdsCallbackContext(),
+                "composite retained callback context after worker joined");
+        require(owner.shutdownAndJoin(), "composite repeated stop failed");
+        require(!owner.registerCallback(1202, 1200, ALOOPER_EVENT_INPUT,
+                                        autoRemovingCallback, &calls),
+                "composite admitted registration after terminal stop");
+    }
+    require(calls == 0, "unexpected callback dispatched without readiness");
+    require(platform.references == 0 &&
+            platform.acquireCalls.load() == acquired + 1 &&
+            platform.releaseCalls.load() == released + 1,
+            "composite failed add recovery leaked a looper reference");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "composite failed add recovery retained platform userdata");
+        platform.pending = false;
+        platform.wake = false;
+    }
+    const int removalAttempts = platform.removeAttempts.load();
+    const int idleAcquired = platform.acquireCalls.load();
+    const int idleReleased = platform.releaseCalls.load();
+    {
+        anvildesk_m8::RendererSessionOwnedLooper unused;
+        require(!unused.holdsCallbackContext(),
+                "idle composite unexpectedly owns callback context");
+        require(unused.shutdownAndJoin(), "idle composite shutdown failed");
+        require(unused.shutdownAndJoin(), "idle composite repeat shutdown failed");
+        require(!unused.holdsCallbackContext(),
+                "idle composite manufactured callback context during shutdown");
+        require(!unused.registerCallback(1203, 1203, ALOOPER_EVENT_INPUT,
+                                         autoRemovingCallback, &calls),
+                "idle composite admitted registration after stop");
+    }
+    require(platform.removeAttempts.load() == removalAttempts,
+            "idle composite attempted removing an unregistered descriptor");
+    require(platform.references == 0 &&
+            platform.acquireCalls.load() == idleAcquired + 1 &&
+            platform.releaseCalls.load() == idleReleased + 1,
+            "idle composite failed exact looper reference balance");
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -1048,6 +1126,7 @@ int main() {
     testRendererSessionCompositeAutoRemovalAndFreshGeneration();
     testRendererSessionCompositeCompetingShutdownSelfJoin();
     testRendererSessionCompositeFailedRemovalClosesCallbackAdmission();
+    testRendererSessionCompositeAddFailureAndIdleClose();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -1080,6 +1159,7 @@ int main() {
               << "M8_RENDERER_SESSION_COMPOSITE_AUTO_REMOVE_FRESH_GENERATION=PASS\n"
               << "M8_RENDERER_SESSION_COMPOSITE_CONCURRENT_SELF_JOIN_GUARD=PASS\n"
               << "M8_RENDERER_SESSION_COMPOSITE_FAILED_REMOVE_LATE_CALLBACK_REJECTED=PASS\n"
+              << "M8_RENDERER_SESSION_COMPOSITE_ADD_FAILURE_IDLE_CLOSE=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

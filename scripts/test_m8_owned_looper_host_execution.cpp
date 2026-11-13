@@ -980,6 +980,59 @@ static void testRendererSessionCompositeCompetingShutdownSelfJoin() {
             platform.releaseCalls.load() == beforeRelease + 1,
             "composite concurrent shutdown broke reference balance");
 }
+static void testRendererSessionCompositeFailedRemovalClosesCallbackAdmission() {
+    require(platform.references == 0, "prior owner left looper ref active");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered, "prior owner left descriptor registered");
+        platform.callbackAutoRemoved = std::promise<void>{};
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    const int alreadyAbsent = platform.alreadyRemovedReturns.load();
+    const int acquires = platform.acquireCalls.load();
+    const int releases = platform.releaseCalls.load();
+    auto autoRemoved = platform.callbackAutoRemoved.get_future();
+    std::atomic<int> calls{0};
+    anvildesk_m8::RendererSessionOwnedLooper owner;
+    require(owner.registerCallback(1100, 1100, ALOOPER_EVENT_INPUT,
+                                   autoRemovingCallback, &calls),
+            "failed-removal admission test did not register callback");
+    platform.failRemove = true;
+    require(!owner.shutdownAndJoin(),
+            "composite ignored removal failure before callback dispatch");
+    require(owner.holdsCallbackContext(),
+            "composite freed callback context on removal failure");
+    // With platform deregistration failed, an event may still reach the
+    // trampoline. The closed generation gate must reject it WITHOUT
+    // entering or dereferencing the caller's callback userdata.
+    triggerEvent();
+    require(autoRemoved.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "closed gate did not auto-remove late callback");
+    require(calls == 0,
+            "client callback executed after removal failed and admission closed");
+    require(owner.holdsCallbackContext(),
+            "platform auto-removal released userdata before worker join");
+    platform.failRemove = false;
+    require(owner.shutdownAndJoin(),
+            "composite failed retry after closed-gate callback auto-removal");
+    require(!owner.holdsCallbackContext(),
+            "composite retained callback context after worker joined");
+    require(owner.shutdownAndJoin(), "composite duplicate join failed");
+    triggerEvent();
+    require(calls == 0, "late event reached client after callback context cleanup");
+    require(platform.alreadyRemovedReturns.load() == alreadyAbsent + 1,
+            "composite did not accept already-removed descriptor after retry");
+    require(platform.references == 0 &&
+            platform.acquireCalls.load() == acquires + 1 &&
+            platform.releaseCalls.load() == releases + 1,
+            "composite removal retry unbalanced looper references");
+    require(!owner.registerCallback(1101, 1100, ALOOPER_EVENT_INPUT,
+                                    autoRemovingCallback, &calls),
+            "composite reopened callback admission following failed removal");
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -994,6 +1047,7 @@ int main() {
     testRendererSessionCompositeRetainsStateThroughFailedRemoval();
     testRendererSessionCompositeAutoRemovalAndFreshGeneration();
     testRendererSessionCompositeCompetingShutdownSelfJoin();
+    testRendererSessionCompositeFailedRemovalClosesCallbackAdmission();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -1025,6 +1079,7 @@ int main() {
               << "M8_RENDERER_SESSION_COMPOSITE_FAILED_REMOVE_JOIN=PASS\n"
               << "M8_RENDERER_SESSION_COMPOSITE_AUTO_REMOVE_FRESH_GENERATION=PASS\n"
               << "M8_RENDERER_SESSION_COMPOSITE_CONCURRENT_SELF_JOIN_GUARD=PASS\n"
+              << "M8_RENDERER_SESSION_COMPOSITE_FAILED_REMOVE_LATE_CALLBACK_REJECTED=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

@@ -16,6 +16,9 @@ public:
     RendererOwnedLooperAdapter(const RendererOwnedLooperAdapter&) = delete;
     RendererOwnedLooperAdapter& operator=(const RendererOwnedLooperAdapter&) = delete;
 
+    // Immutable worker identity; safe before acquiring any shutdown mutex.
+    bool onWorkerThread() const noexcept { return looper_.onWorkerThread(); }
+
     bool registerCallback(std::uint64_t generation, int fd, int events,
                           ALooper_callbackFunc callback, void* userdata) {
         // A callback must never block behind an external join of itself.

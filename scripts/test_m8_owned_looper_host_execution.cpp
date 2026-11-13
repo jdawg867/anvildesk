@@ -897,6 +897,89 @@ static void testRendererSessionCompositeAutoRemovalAndFreshGeneration() {
             platform.releaseCalls.load() == baselineReleases + 2,
             "composite reused FD with unbalanced looper references");
 }
+struct CompositeSelfJoinContext {
+    anvildesk_m8::RendererSessionOwnedLooper* owner;
+    std::promise<void>* entered;
+    std::shared_future<void>* release;
+    std::atomic<bool>* selfJoinRejected;
+    std::atomic<bool>* workerContextInspectionRejected;
+    std::atomic<int>* invocations;
+};
+static int compositeSelfJoinCallback(int, int, void* raw) {
+    auto* data = static_cast<CompositeSelfJoinContext*>(raw);
+    ++*data->invocations;
+    try {
+        data->owner->shutdownAndJoin();
+    } catch (const std::logic_error&) {
+        data->selfJoinRejected->store(true);
+    }
+    data->workerContextInspectionRejected->store(
+        !data->owner->holdsCallbackContext());
+    data->entered->set_value();
+    data->release->wait();
+    return 1;
+}
+static void testRendererSessionCompositeCompetingShutdownSelfJoin() {
+    require(platform.references == 0, "prior composite leaked looper ref");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered, "prior composite left registered callback");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    auto removed = platform.removalSucceeded.get_future();
+    std::promise<void> entered, release;
+    auto enteredFuture = entered.get_future();
+    auto allowRelease = release.get_future().share();
+    std::atomic<bool> selfJoinRejected{false}, inspectionRejected{false};
+    std::atomic<int> calls{0};
+    const int beforeAcquire = platform.acquireCalls.load();
+    const int beforeRelease = platform.releaseCalls.load();
+    anvildesk_m8::RendererSessionOwnedLooper owner;
+    CompositeSelfJoinContext userdata{&owner, &entered, &allowRelease,
+                                       &selfJoinRejected, &inspectionRejected,
+                                       &calls};
+    require(owner.registerCallback(920, 920, ALOOPER_EVENT_INPUT,
+                                   compositeSelfJoinCallback, &userdata),
+            "competing shutdown composite registration failed");
+    triggerEvent();
+    require(enteredFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready, "composite self-join callback never entered");
+    require(selfJoinRejected && inspectionRejected,
+            "composite worker operation blocked or admitted its own join");
+    std::atomic<bool> firstDone{false}, secondDone{false};
+    std::atomic<bool> firstJoined{false}, secondJoined{false};
+    std::thread first([&] {
+        firstJoined = owner.shutdownAndJoin();
+        firstDone = true;
+    });
+    std::thread second([&] {
+        secondJoined = owner.shutdownAndJoin();
+        secondDone = true;
+    });
+    require(removed.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "composite competing shutdown never removed descriptor");
+    require(!firstDone && !secondDone,
+            "composite competing shutdown finished while callback held lease");
+    release.set_value();
+    first.join();
+    second.join();
+    require(firstDone && secondDone && firstJoined && secondJoined,
+            "composite competing shutdown failed to join both callers");
+    require(calls == 1, "composite delivered callback more than once");
+    require(!owner.holdsCallbackContext(),
+            "composite kept callback userdata after concurrent join");
+    require(owner.shutdownAndJoin(), "composite lost terminal joined state");
+    require(!owner.registerCallback(921, 920, ALOOPER_EVENT_INPUT,
+                                    compositeSelfJoinCallback, &userdata),
+            "composite admitted new generation after terminal join");
+    require(platform.references == 0 &&
+            platform.acquireCalls.load() == beforeAcquire + 1 &&
+            platform.releaseCalls.load() == beforeRelease + 1,
+            "composite concurrent shutdown broke reference balance");
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -910,6 +993,7 @@ int main() {
     testUnifiedAdapterHeapUserdataLifetime();
     testRendererSessionCompositeRetainsStateThroughFailedRemoval();
     testRendererSessionCompositeAutoRemovalAndFreshGeneration();
+    testRendererSessionCompositeCompetingShutdownSelfJoin();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -940,6 +1024,7 @@ int main() {
               << "M8_RENDERER_UNIFIED_OWNER_HEAP_USERDATA_POST_JOIN_FREE=PASS\n"
               << "M8_RENDERER_SESSION_COMPOSITE_FAILED_REMOVE_JOIN=PASS\n"
               << "M8_RENDERER_SESSION_COMPOSITE_AUTO_REMOVE_FRESH_GENERATION=PASS\n"
+              << "M8_RENDERER_SESSION_COMPOSITE_CONCURRENT_SELF_JOIN_GUARD=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

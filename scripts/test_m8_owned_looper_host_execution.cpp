@@ -108,6 +108,7 @@ int ALooper_pollOnce(int, int*, int*, void**) {
 }
 #include "m8-android-owned-looper-thread.cpp"
 #include "m8-renderer-owned-looper-adapter.h"
+#include "m8-renderer-session-owned-looper.h"
 static void require(bool ok, const char* why) {
     if (!ok) throw std::runtime_error(why);
 }
@@ -770,6 +771,76 @@ static void testUnifiedAdapterHeapUserdataLifetime() {
     require(adapter.shutdownAndJoin(), "heap owner repeated shutdown failed");
     require(platform.references == 0, "heap owner leaked looper reference");
 }
+struct CompositeHeldCallbackContext {
+    std::promise<void>* entered;
+    std::shared_future<void>* release;
+    std::atomic<int>* calls;
+};
+static int compositeHeldCallback(int, int, void* raw) {
+    auto* context = static_cast<CompositeHeldCallbackContext*>(raw);
+    ++*context->calls;
+    context->entered->set_value();
+    context->release->wait();
+    return 1;
+}
+static void testRendererSessionCompositeRetainsStateThroughFailedRemoval() {
+    require(platform.references == 0, "previous owner leaked looper reference");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered, "previous owner left callback registered");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    std::promise<void> entered, release;
+    auto enteredFuture = entered.get_future();
+    auto releaseSignal = release.get_future().share();
+    auto removed = platform.removalSucceeded.get_future();
+    std::atomic<int> calls{0};
+    CompositeHeldCallbackContext userdata{&entered, &releaseSignal, &calls};
+    anvildesk_m8::RendererSessionOwnedLooper owner;
+    require(!owner.registerCallback(0, 720, ALOOPER_EVENT_INPUT,
+                                    compositeHeldCallback, &userdata),
+            "composite accepted generation zero");
+    require(owner.registerCallback(720, 720, ALOOPER_EVENT_INPUT,
+                                   compositeHeldCallback, &userdata),
+            "composite callback registration failed");
+    require(owner.holdsCallbackContext(), "composite lost registered context");
+    require(!owner.registerCallback(721, 721, ALOOPER_EVENT_INPUT,
+                                    compositeHeldCallback, &userdata),
+            "composite admitted replacement registration");
+    triggerEvent();
+    require(enteredFuture.wait_for(std::chrono::seconds(5)) ==
+            std::future_status::ready, "composite callback never entered");
+    platform.failRemove.store(true);
+    require(!owner.shutdownAndJoin(), "composite ignored failed descriptor removal");
+    require(owner.holdsCallbackContext(),
+            "composite freed platform callback userdata after failed removal");
+    require(!owner.registerCallback(722, 722, ALOOPER_EVENT_INPUT,
+                                    compositeHeldCallback, &userdata),
+            "composite reopened registration after failed shutdown");
+    platform.failRemove.store(false);
+    std::atomic<bool> joined{false};
+    std::thread shutdown([&] { joined = owner.shutdownAndJoin(); });
+    require(removed.wait_for(std::chrono::seconds(5)) == std::future_status::ready,
+            "composite retry did not remove FD");
+    require(!joined, "composite joined while callback still active");
+    release.set_value();
+    shutdown.join();
+    require(joined && calls == 1, "composite failed to drain active callback");
+    require(!owner.holdsCallbackContext(),
+            "composite retained callback context after verified join");
+    require(owner.shutdownAndJoin(), "composite repeated shutdown failed");
+    require(!owner.registerCallback(723, 723, ALOOPER_EVENT_INPUT,
+                                    compositeHeldCallback, &userdata),
+            "composite admitted callback after final shutdown");
+    require(platform.references == 0, "composite shutdown leaked looper reference");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "composite teardown left stale fake platform userdata");
+    }
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -781,6 +852,7 @@ int main() {
     testUnifiedAdapterCallbackAutoRemoval();
     testUnifiedAdapterShutdownBeforeRegistration();
     testUnifiedAdapterHeapUserdataLifetime();
+    testRendererSessionCompositeRetainsStateThroughFailedRemoval();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -809,6 +881,7 @@ int main() {
               << "M8_RENDERER_UNIFIED_OWNER_CALLBACK_AUTO_REMOVAL=PASS\n"
               << "M8_RENDERER_UNIFIED_OWNER_IDLE_FINAL_SHUTDOWN=PASS\n"
               << "M8_RENDERER_UNIFIED_OWNER_HEAP_USERDATA_POST_JOIN_FREE=PASS\n"
+              << "M8_RENDERER_SESSION_COMPOSITE_FAILED_REMOVE_JOIN=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

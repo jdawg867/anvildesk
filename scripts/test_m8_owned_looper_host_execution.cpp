@@ -841,6 +841,62 @@ static void testRendererSessionCompositeRetainsStateThroughFailedRemoval() {
                 "composite teardown left stale fake platform userdata");
     }
 }
+static void testRendererSessionCompositeAutoRemovalAndFreshGeneration() {
+    require(platform.references == 0, "prior composite leaked looper reference");
+    const int baselineAlreadyRemoved = platform.alreadyRemovedReturns.load();
+    const int baselineAcquires = platform.acquireCalls.load();
+    const int baselineReleases = platform.releaseCalls.load();
+    std::atomic<int> firstCalls{0}, secondCalls{0};
+    for (int iteration = 0; iteration < 2; ++iteration) {
+        {
+            std::lock_guard<std::mutex> lock(platform.mutex);
+            require(!platform.registered, "previous session left an FD registered");
+            platform.callbackAutoRemoved = std::promise<void>{};
+            platform.removalSucceeded = std::promise<void>{};
+            platform.pending = false;
+            platform.wake = false;
+            require(platform.userdata == nullptr && platform.callback == nullptr,
+                    "fake looper retained stale callback pointer");
+        }
+        auto removed = platform.callbackAutoRemoved.get_future();
+        auto* calls = iteration == 0 ? &firstCalls : &secondCalls;
+        anvildesk_m8::RendererSessionOwnedLooper owner;
+        const std::uint64_t generation = iteration == 0 ? 801 : 802;
+        require(owner.registerCallback(generation, 801, ALOOPER_EVENT_INPUT,
+                                       autoRemovingCallback, calls),
+                "composite failed to register fresh session");
+        {
+            std::lock_guard<std::mutex> lock(platform.mutex);
+            require(platform.userdata != static_cast<void*>(calls),
+                    "composite passed raw client userdata to Android");
+            require(platform.userdata != nullptr &&
+                    platform.callback != autoRemovingCallback,
+                    "composite bypassed stable trampoline callback context");
+        }
+        triggerEvent();
+        require(removed.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready, "composite did not auto-remove callback");
+        require(calls->load() == 1, "composite auto-removal callback count incorrect");
+        require(owner.holdsCallbackContext(),
+                "composite released context before joining auto-removed callback");
+        require(!owner.registerCallback(generation + 100, 801, ALOOPER_EVENT_INPUT,
+                                        autoRemovingCallback, calls),
+                "composite re-registered after callback auto-removal");
+        triggerEvent(); // fake pending notification must never invoke removed callback
+        require(owner.shutdownAndJoin(), "composite auto-removal shutdown failed");
+        require(owner.shutdownAndJoin(), "composite repeat shutdown failed");
+        require(!owner.holdsCallbackContext(), "composite leaked auto-removed context");
+        require(calls->load() == 1, "composite redelivered auto-removed callback");
+        require(platform.references == 0, "composite leaked looper reference");
+    }
+    require(firstCalls == 1 && secondCalls == 1,
+            "new generation reused prior callback client state");
+    require(platform.alreadyRemovedReturns.load() == baselineAlreadyRemoved + 2,
+            "composite did not handle already-removed descriptor twice");
+    require(platform.acquireCalls.load() == baselineAcquires + 2 &&
+            platform.releaseCalls.load() == baselineReleases + 2,
+            "composite reused FD with unbalanced looper references");
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -853,6 +909,7 @@ int main() {
     testUnifiedAdapterShutdownBeforeRegistration();
     testUnifiedAdapterHeapUserdataLifetime();
     testRendererSessionCompositeRetainsStateThroughFailedRemoval();
+    testRendererSessionCompositeAutoRemovalAndFreshGeneration();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -882,6 +939,7 @@ int main() {
               << "M8_RENDERER_UNIFIED_OWNER_IDLE_FINAL_SHUTDOWN=PASS\n"
               << "M8_RENDERER_UNIFIED_OWNER_HEAP_USERDATA_POST_JOIN_FREE=PASS\n"
               << "M8_RENDERER_SESSION_COMPOSITE_FAILED_REMOVE_JOIN=PASS\n"
+              << "M8_RENDERER_SESSION_COMPOSITE_AUTO_REMOVE_FRESH_GENERATION=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

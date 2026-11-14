@@ -622,6 +622,39 @@ jobs:
           grep -Fx 'M8_RENDERER_ANDROID_CALLBACK_QUIESCENCE_VERIFIED=false' /tmp/m8-renderer-ownership-model.txt
           grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' /tmp/m8-renderer-ownership-model.txt
 
+      - name: Sanitize isolated M8 per-callback JNI thread scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -Wall -Wextra -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -Iscripts scripts/test_m8_renderer_callback_jni_scope.cpp \
+            -o /tmp/m8-jni-thread-scope-test
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 20s /tmp/m8-jni-thread-scope-test \
+            | tee /tmp/m8-jni-thread-scope-test.txt
+          grep -Fx 'M8_JNI_SCOPE_BORROWED_ENV_NO_DETACH=PASS' /tmp/m8-jni-thread-scope-test.txt
+          grep -Fx 'M8_JNI_SCOPE_ATTACH_DETACH_BALANCED=PASS' /tmp/m8-jni-thread-scope-test.txt
+          grep -Fx 'M8_JNI_SCOPE_FAILURE_FAIL_CLOSED=PASS' /tmp/m8-jni-thread-scope-test.txt
+          grep -Fx 'M8_JNI_SCOPE_WORKER_THREAD_LOCAL=PASS' /tmp/m8-jni-thread-scope-test.txt
+          grep -Fx 'M8_LORIE_CALLBACK_JNI_INTEGRATED=false' /tmp/m8-jni-thread-scope-test.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' /tmp/m8-jni-thread-scope-test.txt
+
+      - name: Compile isolated M8 JNI callback scope with Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/27.2.12479018"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          printf '#include "m8-renderer-jni-thread-env.h"\nvoid m8_probe(JavaVM* vm) { anvildesk_m8::AndroidJniThreadBackend backend(vm); anvildesk_m8::ScopedAndroidCallbackEnv scope(backend); (void)scope.get(); }\n' \
+            | "$bin/clang++" --target=aarch64-linux-android26 \
+                -std=c++17 -Wall -Wextra -Werror -Iscripts \
+                -x c++ -fsyntax-only -
+          echo 'M8_JNI_SCOPE_ARM64_NDK_COMPILE=PASS'
+          echo 'M8_LORIE_CALLBACK_JNI_INTEGRATED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
       - name: Test M8 isolated renderer session callback context
         shell: bash
         run: |

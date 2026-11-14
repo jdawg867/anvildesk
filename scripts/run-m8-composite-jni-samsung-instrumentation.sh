@@ -81,9 +81,21 @@ mapfile -d '' -t test_apks < <(find "$workspace" -type f -name app-debug-android
   exit 1
 }
 # Repeat the package identity/isolation checks on the exact files to install.
-: "${ANDROID_HOME:?Android SDK required for local package verification}"
-aapt="$ANDROID_HOME/build-tools/36.0.0/aapt"
-[[ -x "$aapt" ]] || { echo "STOP: aapt missing" >&2; exit 1; }
+aapt=""
+for sdk in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" \
+           "$HOME/Android/Sdk" "$HOME/Android/sdk" \
+           /opt/android-sdk /usr/local/lib/android/sdk /usr/lib/android-sdk; do
+  [[ -n "$sdk" ]] || continue
+  candidate="$sdk/build-tools/36.0.0/aapt"
+  if [[ -x "$candidate" ]]; then
+    aapt="$candidate"
+    break
+  fi
+done
+[[ -n "$aapt" ]] || {
+  echo "STOP: Android SDK build-tools 36.0.0/aapt not found" >&2
+  exit 1
+}
 "$aapt" dump badging "${target_apks[0]}" | grep -Fq "package: name='$TARGET'"
 "$aapt" dump badging "${test_apks[0]}" | grep -Fq "package: name='$TEST'"
 if unzip -Z1 "${target_apks[0]}" | grep -Fq libm8-composite-jni-diagnostic.so; then

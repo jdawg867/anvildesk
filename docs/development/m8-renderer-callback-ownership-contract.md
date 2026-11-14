@@ -12,6 +12,17 @@ checks. See `docs/development/m8-composite-jni-samsung-device-acceptance.md`
 for artifact provenance, observed markers and limits. The Lorie and production
 native-load gates remain blocked.
 
+**Second Samsung diagnostic (2026-11-14):** a new isolated APK
+(`e671a071`, artifact `14104411442`) passed AndroidJUnitRunner
+`OK (1 test)` after calling both real JNI worker-attachment and
+`runGlobalRefProbe(new Object())`. The latter exercises a real Java global
+reference from the owned looper callback, preserves it before join and on a
+deliberate pending JNI exception, then deletes it after the join.
+The updated device-runner path guard passed; see
+`docs/development/m8-composite-jni-samsung-device-acceptance.md`.
+This does **not** verify Lorie's native handle, global references,
+`nativeDestroy`, callback quiescence under all races, or Xorg lifecycle.
+
 Reference: draft PR #21, branch `feature/android-x11-display-input`. This
 contract records the minimum safe ownership boundary before any native renderer
 integration. It is not an implementation or permission to load `libXlorie.so`.

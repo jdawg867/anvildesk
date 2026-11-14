@@ -2,6 +2,16 @@
 
 **Status: BLOCKED for Lorie renderer integration.** The isolated unified-owner adapter passed a Samsung SM-G766U ARM64 device probe (2026-11-12), and the combined `RendererSessionOwnedLooper` callback trampoline/session context passed a separate Samsung ARM64 device probe (2026-11-13). **Neither is wired to Lorie, JNI, or the production app.** Evidence: `docs/development/m8-unified-owner-samsung-probe-readiness.md` and `docs/development/m8-composite-owner-samsung-device-acceptance.md`.
 
+**New isolated JNI evidence (2026-11-14):** the explicitly opted-in
+`M8CompositeJniDiagnosticInstrumentedTest` ran successfully on the Samsung
+SM-G766U (`OK (1 test)`, `INSTRUMENTATION_CODE: -1`), reporting a real
+`JavaVM*` worker-attachment / owned-looper join result. This is diagnostic
+JNI scope execution, **not** patched Lorie callbacks or renderer lifecycle
+validation. The original AnvilDesk package path remained unchanged per runner
+checks. See `docs/development/m8-composite-jni-samsung-device-acceptance.md`
+for artifact provenance, observed markers and limits. The Lorie and production
+native-load gates remain blocked.
+
 Reference: draft PR #21, branch `feature/android-x11-display-input`. This
 contract records the minimum safe ownership boundary before any native renderer
 integration. It is not an implementation or permission to load `libXlorie.so`.

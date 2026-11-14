@@ -130,6 +130,17 @@ checks that a post-join fake event cannot re-enter the retired client.
 This is still fake-NDK host evidence, not proof that an unmodified Lorie
 callback's raw `this` userdata is safe on Android.
 
+**Recycled-FD replacement generation test:** the isolated host looper test
+registers an old renderer generation, joins its callback worker, and then
+registers a replacement generation on the *same* numeric FD. A callback
+carrying the old generation is dispatched on the replacement's live worker,
+but the new session's generation gate must reject it without mutating
+replacement state. A subsequent current-generation callback must enter
+exactly once. The old and new callback contexts remain separate and neither
+is freed until its respective worker joins. This covers a source-level
+replacement boundary, **not** delivery of a dangling platform userdata
+pointer or actual upstream Lorie connection replacement.
+
 **Limit:** this is a host protocol model with a synthetic worker join and
 renderer cleanup. It is not wired to `RendererSessionOwnedLooper`, to
 `LorieViewResources`, to a real Java Surface, or to Xorg. In particular,

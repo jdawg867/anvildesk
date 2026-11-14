@@ -109,6 +109,7 @@ int ALooper_pollOnce(int, int*, int*, void**) {
 #include "m8-android-owned-looper-thread.cpp"
 #include "m8-renderer-owned-looper-adapter.h"
 #include "m8-renderer-session-owned-looper.h"
+#include "m8-renderer-callback-jni-scope.h"
 static void require(bool ok, const char* why) {
     if (!ok) throw std::runtime_error(why);
 }
@@ -1111,6 +1112,126 @@ static void testRendererSessionCompositeAddFailureAndIdleClose() {
             platform.releaseCalls.load() == idleReleased + 1,
             "idle composite failed exact looper reference balance");
 }
+// JNI scopes are exercised INSIDE the composite worker callback. Fake JVM
+// checks attachment order without loading JNI or Lorie on the host.
+struct CompositeJniBackend {
+    struct Env { std::thread::id worker; };
+    enum class Status { Attached, Detached, Error };
+    Env env{};
+    std::atomic<int> queries{0}, attaches{0}, detaches{0};
+    std::atomic<bool> failAttach{false};
+    Status query(Env** out) {
+        ++queries;
+        *out = nullptr;
+        return Status::Detached;
+    }
+    bool attach(Env** out) {
+        ++attaches;
+        *out = nullptr;
+        if (failAttach.load()) return false;
+        env.worker = std::this_thread::get_id();
+        *out = &env;
+        return true;
+    }
+    void detach() { ++detaches; }
+};
+struct CompositeJniCallbackData {
+    CompositeJniBackend* backend;
+    std::promise<void>* entered;
+    std::shared_future<void>* release;
+    std::atomic<int>* validEnvironmentCalls;
+};
+static int compositeJniCallback(int, int, void* raw) {
+    auto* data = static_cast<CompositeJniCallbackData*>(raw);
+    {
+        anvildesk_m8::ScopedCallbackThreadEnv<CompositeJniBackend> scope(
+            *data->backend);
+        if (scope && scope.attachedHere() &&
+            scope.get()->worker == std::this_thread::get_id())
+            ++*data->validEnvironmentCalls;
+        data->entered->set_value();
+        data->release->wait();
+    } // Must detach before the callback returns to the poll loop.
+    return 1;
+}
+static void testCompositeJniScopeOnOwnedCallbackWorker() {
+    require(platform.references == 0, "prior composite leaked looper reference");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered, "prior composite left callback registered");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    CompositeJniBackend backend;
+    std::promise<void> entered, release;
+    auto enteredFuture = entered.get_future();
+    auto releaseFuture = release.get_future().share();
+    auto removed = platform.removalSucceeded.get_future();
+    std::atomic<int> validEnvironments{0};
+    CompositeJniCallbackData data{&backend, &entered, &releaseFuture,
+                                  &validEnvironments};
+    anvildesk_m8::RendererSessionOwnedLooper owner;
+    require(owner.registerCallback(1400, 1400, ALOOPER_EVENT_INPUT,
+                                   compositeJniCallback, &data),
+            "failed to register composite JNI scope callback");
+    triggerEvent();
+    require(enteredFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "composite JNI callback did not enter");
+    require(validEnvironments == 1 && backend.queries == 1 &&
+            backend.attaches == 1 && backend.detaches == 0,
+            "JNI scope did not attach on the owned worker");
+    std::atomic<bool> joined{false};
+    std::thread shutdown([&] { joined = owner.shutdownAndJoin(); });
+    require(removed.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "composite JNI callback was not deregistered");
+    require(!joined && backend.detaches == 0,
+            "composite released JNI worker while callback still held");
+    release.set_value();
+    shutdown.join();
+    require(joined && backend.detaches == 1,
+            "composite failed to detach callback thread before joining");
+    require(!owner.holdsCallbackContext() && platform.references == 0,
+            "composite JNI scope leaked callback context or looper reference");
+    require(owner.shutdownAndJoin() && backend.detaches == 1,
+            "repeated shutdown caused duplicate JNI detach");
+
+    // An attach failure must reject the JNI environment and must not detach.
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered, "successful JNI scope left registered FD");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    CompositeJniBackend failedBackend;
+    failedBackend.failAttach = true;
+    std::promise<void> failedEntered, failedRelease;
+    auto failedEnteredFuture = failedEntered.get_future();
+    auto failedReleaseFuture = failedRelease.get_future().share();
+    std::atomic<int> failedValid{0};
+    CompositeJniCallbackData failedData{&failedBackend, &failedEntered,
+                                        &failedReleaseFuture, &failedValid};
+    anvildesk_m8::RendererSessionOwnedLooper failedOwner;
+    require(failedOwner.registerCallback(1401, 1400, ALOOPER_EVENT_INPUT,
+                                         compositeJniCallback, &failedData),
+            "composite failed to register JNI attach-failure callback");
+    triggerEvent();
+    require(failedEnteredFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "composite attach-failure callback did not run");
+    require(failedBackend.queries == 1 && failedBackend.attaches == 1 &&
+            failedBackend.detaches == 0 && failedValid == 0,
+            "JNI attach failure incorrectly provided environment or detached");
+    failedRelease.set_value();
+    require(failedOwner.shutdownAndJoin(),
+            "composite failed to join callback with failed JNI attach");
+    require(failedBackend.detaches == 0 &&
+            !failedOwner.holdsCallbackContext() && platform.references == 0,
+            "failed JNI attach caused detach or callback context leak");
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -1127,6 +1248,7 @@ int main() {
     testRendererSessionCompositeCompetingShutdownSelfJoin();
     testRendererSessionCompositeFailedRemovalClosesCallbackAdmission();
     testRendererSessionCompositeAddFailureAndIdleClose();
+    testCompositeJniScopeOnOwnedCallbackWorker();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -1160,6 +1282,8 @@ int main() {
               << "M8_RENDERER_SESSION_COMPOSITE_CONCURRENT_SELF_JOIN_GUARD=PASS\n"
               << "M8_RENDERER_SESSION_COMPOSITE_FAILED_REMOVE_LATE_CALLBACK_REJECTED=PASS\n"
               << "M8_RENDERER_SESSION_COMPOSITE_ADD_FAILURE_IDLE_CLOSE=PASS\n"
+              << "M8_RENDERER_COMPOSITE_JNI_SCOPE_WORKER_JOIN=PASS\n"
+              << "M8_RENDERER_COMPOSITE_JNI_ATTACH_FAILURE_FAIL_CLOSED=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

@@ -1662,7 +1662,9 @@ static void testReplacementAdmissionWaitsForPriorWorkerJoin() {
     require(removedFuture.wait_for(std::chrono::seconds(5)) ==
                 std::future_status::ready,
             "old callback registration not removed");
-    require(!joined && active == 1 && previous.holdsCallbackContext(),
+    // shutdownAndJoin holds the owner mutex while waiting for the callback;
+    // do not query holdsCallbackContext() from another thread until joined.
+    require(!joined && active == 1 && platform.references == 1,
             "previous callback userdata released before join");
     std::atomic<int> newCalls{0};
     require(!previous.registerCallback(1951, fd, ALOOPER_EVENT_INPUT,

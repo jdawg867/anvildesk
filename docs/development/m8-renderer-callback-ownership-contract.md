@@ -1,6 +1,6 @@
 # M8 renderer callback ownership contract (design gate)
 
-**Status: BLOCKED for Lorie renderer integration.** The isolated unified-owner adapter has passed host tests and a standalone Samsung SM-G766U ARM64 device probe (2026-11-12), but remains **unwired to Lorie, JNI, or the production app**. Device evidence: `docs/development/m8-unified-owner-samsung-probe-readiness.md`.
+**Status: BLOCKED for Lorie renderer integration.** The isolated unified-owner adapter passed a Samsung SM-G766U ARM64 device probe (2026-11-12), and the combined `RendererSessionOwnedLooper` callback trampoline/session context passed a separate Samsung ARM64 device probe (2026-11-13). **Neither is wired to Lorie, JNI, or the production app.** Evidence: `docs/development/m8-unified-owner-samsung-probe-readiness.md` and `docs/development/m8-composite-owner-samsung-device-acceptance.md`.
 
 Reference: draft PR #21, branch `feature/android-x11-display-input`. This
 contract records the minimum safe ownership boundary before any native renderer
@@ -78,6 +78,7 @@ Source-observation markers are **not** runtime safety attestations.
   2026-11-12. That proof covers **only** its own pipe callback and
   unified-owner shutdown path, not the upstream Lorie `activity.cpp`
   callback, `JNIEnv*`, surfaces, or renderer destruction.
+- The complete isolated composite owner (`m8-renderer-session-owned-looper.h` and `m8-renderer-session-callback-context.h`) now also has real Android device smoke-test evidence. The user-supplied 2026-11-13 run passed callback dispatch, worker join and post-join context release, with pinned build/artifact provenance in `docs/development/m8-composite-owner-samsung-device-acceptance.md`. It does not establish renderer/JNI lifecycle safety.
 - Existing `ALooper_forThread()` registration/destruction and raw
   `this` userdata remain present in the pinned Lorie source. The
   existing `nativeDestroy(J)V` path cannot be promoted merely by

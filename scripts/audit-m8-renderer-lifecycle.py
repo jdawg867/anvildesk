@@ -71,11 +71,27 @@ def audit(source: str) -> list[str]:
     connect_start = "void LorieViewResources::connect(jint fd) {"
     if source.count(connect_start) != 1:
         raise ValueError("Pinned renderer connect boundary drift")
-    connect_section = source.split(connect_start, 1)[1]
-    registration = connect_section.find("ALooper_addFd(ALooper_forThread(), fd,")
-    if registration < 0 or registration > 1200:
+    # Restrict the match to the balanced connect() body. Searching through
+    # the rest of activity.cpp would incorrectly accept an unrelated
+    # addFd/callback pair after connect's closing brace.
+    rest = source.split(connect_start, 1)[1]
+    depth = 1
+    close = None
+    for offset, character in enumerate(rest):
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                close = offset
+                break
+    if close is None:
+        raise ValueError("Pinned renderer connect closing brace drift")
+    connect_body = rest[:close]
+    registration = connect_body.find("ALooper_addFd(ALooper_forThread(), fd,")
+    if registration < 0:
         raise ValueError("Pinned renderer connect registration drift")
-    userdata = connect_section.find("callback, this);", registration)
+    userdata = connect_body.find("callback, this);", registration)
     if userdata < 0 or userdata - registration > 350:
         raise ValueError("Pinned renderer connect raw userdata drift")
     # A raw LorieViewResources* dispatched by the registered platform

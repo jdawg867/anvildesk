@@ -2,11 +2,11 @@
 set -euo pipefail
 # Read-only provenance and APK isolation check. NO adb, install, or code execution.
 REPO="jdawg867/anvildesk"
-RUN_ID="43561562356"
-EXPECTED_SHA="dd8009d7b5a1bc714c11feeeaedcee5bdc59c003"
+RUN_ID="43570274527"
+EXPECTED_SHA="e671a0711742980b5c6df283220660aa93b59d57"
 ARTIFACT="m8-composite-jni-diagnostic-test-apks-arm64"
-ARTIFACT_ID="14100975634"
-ARTIFACT_DIGEST="sha256:fe3aaac5d1ab25fa350f9321732d5e30022d06d256cde39ae5835bf663af8fc1"
+ARTIFACT_ID="14104411442"
+ARTIFACT_DIGEST="sha256:4ff87bd54ef619d4a9643b2deda5fc7f44e629c5adba96f21fd84f800b6c50c8"
 TARGET_PACKAGE="io.github.jdawg867.anvildesk.m8jnidiag"
 TEST_PACKAGE="$TARGET_PACKAGE.test"
 LIB="lib/arm64-v8a/libm8-composite-jni-diagnostic.so"
@@ -113,6 +113,11 @@ readelf -Ws "$workspace/isolated-diagnostic.so" > "$workspace/symbols.txt"
 grep -Fq 'Java_io_github_jdawg867_anvildesk_m8_M8CompositeJniDiagnostic_runProbe' \
   "$workspace/symbols.txt" || {
   echo "STOP: JNI entry symbol missing" >&2
+  exit 1
+}
+grep -Fq 'Java_io_github_jdawg867_anvildesk_m8_M8CompositeJniDiagnostic_runGlobalRefProbe' \
+  "$workspace/symbols.txt" || {
+  echo "STOP: real JNI global-reference diagnostic entry missing" >&2
   exit 1
 }
 if grep -Fq 'JNI_OnLoad' "$workspace/symbols.txt"; then

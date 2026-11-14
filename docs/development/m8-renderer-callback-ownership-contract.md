@@ -109,6 +109,17 @@ double-retire either resource. This is more concrete than an injected
 `shutdownAndJoin() == true` fake, **but remains host execution with a fake
 NDK platform**; it is not an Android callback race proof or Lorie integration.
 
+**Failed looper deregistration / retry regression:** the same host composite now
+injects two failing `ALooper_removeFd` attempts while a real owned worker
+callback remains active. The retirement coordinator must refuse completion,
+retain callback userdata and the JNI global reference, preserve renderer
+resources, and reject a replacement registration. After clearing the simulated
+failure, a separate thread retries shutdown; even after successful removal,
+JNI and renderer retirement remain blocked until the held callback finishes
+and the owned worker joins. Repeated retirement is checked for exactly-once
+cleanup. These are fake-NDK host execution guarantees, not yet physical
+Android or Lorie integration evidence.
+
 **Limit:** this is a host protocol model with a synthetic worker join and
 renderer cleanup. It is not wired to `RendererSessionOwnedLooper`, to
 `LorieViewResources`, to a real Java Surface, or to Xorg. In particular,

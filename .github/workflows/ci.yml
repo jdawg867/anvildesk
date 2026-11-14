@@ -803,6 +803,7 @@ jobs:
           script=scripts/run-m8-composite-jni-samsung-instrumentation.sh
           bash -n "$script"
           grep -Fqx 'TARGET="io.github.jdawg867.anvildesk.m8jnidiag"' "$script"
+          grep -Fqx 'RUN_ID="43570274527"' "$script"
           grep -Fqx 'ORIGINAL="io.github.jdawg867.anvildesk"' "$script"
           grep -Fq '[[ "$model" == "SM-G766U" && "$abi" == "arm64-v8a" ]]' "$script"
           grep -Fq 'M8_COMPOSITE_JNI_ORIGINAL_APP_PATH_UNCHANGED=PASS' "$script"
@@ -820,11 +821,11 @@ jobs:
         run: |
           set -euo pipefail
           bash -n scripts/verify-m8-composite-jni-test-apks.sh
-          grep -Fqx 'RUN_ID="43561562356"' scripts/verify-m8-composite-jni-test-apks.sh
-          grep -Fqx 'EXPECTED_SHA="dd8009d7b5a1bc714c11feeeaedcee5bdc59c003"' scripts/verify-m8-composite-jni-test-apks.sh
-          grep -Fqx 'ARTIFACT_ID="14100975634"' scripts/verify-m8-composite-jni-test-apks.sh
-          grep -Fqx 'ARTIFACT_DIGEST="sha256:fe3aaac5d1ab25fa350f9321732d5e30022d06d256cde39ae5835bf663af8fc1"' scripts/verify-m8-composite-jni-test-apks.sh
-          expired="$(gh api repos/jdawg867/anvildesk/actions/artifacts/14100975634 --jq '.expired')"
+          grep -Fqx 'RUN_ID="43570274527"' scripts/verify-m8-composite-jni-test-apks.sh
+          grep -Fqx 'EXPECTED_SHA="e671a0711742980b5c6df283220660aa93b59d57"' scripts/verify-m8-composite-jni-test-apks.sh
+          grep -Fqx 'ARTIFACT_ID="14104411442"' scripts/verify-m8-composite-jni-test-apks.sh
+          grep -Fqx 'ARTIFACT_DIGEST="sha256:4ff87bd54ef619d4a9643b2deda5fc7f44e629c5adba96f21fd84f800b6c50c8"' scripts/verify-m8-composite-jni-test-apks.sh
+          expired="$(gh api repos/jdawg867/anvildesk/actions/artifacts/14104411442 --jq '.expired')"
           if [[ "$expired" == "true" ]]; then
             echo 'M8_COMPOSITE_JNI_PINNED_PREFLIGHT_SKIPPED_EXPIRED=true'
             echo 'M8_COMPOSITE_JNI_DEVICE_EXECUTED=false'

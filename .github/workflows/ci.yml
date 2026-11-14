@@ -472,6 +472,42 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Validate pinned Samsung composite owner runner (not executed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/run-m8-composite-owner-device-probe.sh
+          grep -Fqx 'RUN_ID="43537453762"' scripts/run-m8-composite-owner-device-probe.sh
+          grep -Fqx 'EXPECTED_SHA="c26fc7d05d1b9be19c04bc1e6cb8517e53715698"' scripts/run-m8-composite-owner-device-probe.sh
+          grep -Fqx 'EXPECTED_ARTIFACT_ID="14090591718"' scripts/run-m8-composite-owner-device-probe.sh
+          grep -Fqx 'EXPECTED_ARTIFACT_DIGEST="sha256:3708eef7fe09d81a54ceac495bd449fa6d21a58a986b847c0d03fd6f97df6c40"' scripts/run-m8-composite-owner-device-probe.sh
+          echo 'M8_COMPOSITE_OWNER_RUNNER_PINNING=PASS'
+          echo 'M8_COMPOSITE_OWNER_DEVICE_EXECUTED=false'
+
+      - name: Exercise pinned composite owner artifact preflight without ADB
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          expired="$(gh api repos/jdawg867/anvildesk/actions/artifacts/14090591718 --jq '.expired')"
+          if [[ "$expired" == "true" ]]; then
+            echo 'M8_COMPOSITE_OWNER_PREFLIGHT_SKIPPED_EXPIRED=true'
+            echo 'M8_COMPOSITE_OWNER_DEVICE_EXECUTED=false'
+            exit 0
+          fi
+          [[ "$expired" == "false" ]] || {
+            echo 'STOP: unexpected composite artifact expiration state' >&2
+            exit 1
+          }
+          bash scripts/run-m8-composite-owner-device-probe.sh --verify-artifact \
+            | tee /tmp/m8-composite-owner-artifact-preflight.txt
+          grep -Fx 'M8_ARTIFACT_ONLY_PREFLIGHT=PASS' /tmp/m8-composite-owner-artifact-preflight.txt
+          grep -Fx 'M8_ANDROID_DEVICE_PROBE_EXECUTED=false' /tmp/m8-composite-owner-artifact-preflight.txt
+          echo 'M8_COMPOSITE_OWNER_ARTIFACT_PREFLIGHT=PASS'
+          echo 'M8_COMPOSITE_OWNER_DEVICE_EXECUTED=false'
+
       - name: Cross-compile M8 composite session owner Android probe (not executed)
         shell: bash
         run: |

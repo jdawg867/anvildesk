@@ -1525,6 +1525,8 @@ static void testRetirementLateCallbackAfterFailedRemove() {
 // isolated worker dispatch with the old generation delivered against the
 // replacement session's live callback gate. Never invoke freed old userdata.
 struct ReplacementDispatch {
+    explicit ReplacementDispatch(anvildesk_m8::RendererSessionCallbackContext* context)
+        : gate(context) {}
     anvildesk_m8::RendererSessionCallbackContext* gate;
     std::atomic<std::uint64_t> deliveredGeneration{0};
     std::atomic<int> accepted{0};

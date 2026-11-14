@@ -21,9 +21,25 @@ for command in gh unzip readelf mktemp find grep; do
     exit 1
   }
 done
-: "${ANDROID_HOME:?ANDROID_HOME with Android build-tools required}"
-AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
-[[ -x "$AAPT" ]] || { echo "STOP: pinned Android aapt unavailable" >&2; exit 1; }
+# Prefer an explicit pinned aapt, then conventional SDK locations.
+# No SDK downloads or system modifications are performed.
+AAPT=""
+for sdk in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" \
+           "$HOME/Android/Sdk" "$HOME/Android/sdk" \
+           /opt/android-sdk /usr/local/lib/android/sdk /usr/lib/android-sdk; do
+  [[ -n "$sdk" ]] || continue
+  candidate="$sdk/build-tools/36.0.0/aapt"
+  if [[ -x "$candidate" ]]; then
+    AAPT="$candidate"
+    break
+  fi
+done
+if [[ -z "$AAPT" ]]; then
+  echo "STOP: Android SDK build-tools 36.0.0/aapt not found." >&2
+  echo "Set ANDROID_HOME to your installed SDK path or install build-tools;36.0.0." >&2
+  exit 1
+fi
+echo "M8_ANDROID_AAPT_FOUND=PASS"
 
 metadata="$(gh api "repos/$REPO/actions/runs/$RUN_ID" \
   --jq '[.head_sha, .conclusion, .event] | @tsv')"

@@ -1369,6 +1369,88 @@ static void testCompositeSessionRetirementAfterRealWorkerJoin() {
             resources.calls == 1 && owner.shutdownAndJoin(),
             "composite post-join retirement was not idempotent");
 }
+// Failed Android-style callback deregistration must block BOTH ref retirement
+// and renderer release, even if the callback is still running. A later retry
+// must join the real isolated worker, then retire both resources exactly once.
+static void testCompositeSessionRetirementFailedRemoveAndRecovery() {
+    require(platform.references == 0,
+            "previous retirement session retained fake looper");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "previous retirement left raw platform callback userdata");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    int token = 0;
+    CompositeRefBackend backend;
+    std::atomic<int> active{0};
+    JoinedCompositeResource resources{&active, &backend};
+    anvildesk_m8::DeferredGlobalRefRetirement<CompositeRefBackend> refs(
+        backend, &token);
+    std::promise<void> entered, release;
+    auto enteredFuture = entered.get_future();
+    auto releaseFuture = release.get_future().share();
+    auto removedFuture = platform.removalSucceeded.get_future();
+    CompositeRefCallbackData data{&entered, &releaseFuture, &active};
+    anvildesk_m8::RendererSessionOwnedLooper owner;
+    require(owner.registerCallback(1700, 1700, ALOOPER_EVENT_INPUT,
+                                   heldRefCallback, &data),
+            "retry retirement callback registration failed");
+    anvildesk_m8::RendererSessionRetirement<
+        anvildesk_m8::RendererSessionOwnedLooper,
+        decltype(refs), JoinedCompositeResource> retirement(owner, refs, resources);
+    triggerEvent();
+    require(enteredFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "retry retirement callback never reached owned worker");
+    require(active == 1 && refs.holdsReference(),
+            "retry retirement callback state not active");
+
+    const int beforeFailedRemovals = platform.removeAttempts.load();
+    platform.failRemove.store(true);
+    require(!retirement.shutdownAndRetire(),
+            "failed callback removal reported terminal retirement");
+    require(!retirement.shutdownAndRetire(),
+            "second failed callback removal reported retirement");
+    require(platform.removeAttempts.load() == beforeFailedRemovals + 2 &&
+            !retirement.workerJoined() && !retirement.retired() &&
+            owner.holdsCallbackContext() && active == 1 &&
+            refs.holdsReference() && backend.deleted == 0 &&
+            resources.calls == 0 && platform.references == 1,
+            "failed callback removal discarded JNI or renderer resources");
+    require(!owner.registerCallback(1701, 1701, ALOOPER_EVENT_INPUT,
+                                    heldRefCallback, &data),
+            "failed shutdown reopened callback registration");
+
+    platform.failRemove.store(false);
+    std::atomic<bool> completed{false};
+    std::thread retry([&] {
+        completed = retirement.shutdownAndRetire();
+    });
+    require(removedFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "retry did not remove original callback registration");
+    require(!completed && active == 1 && refs.holdsReference() &&
+            backend.deleted == 0 && resources.calls == 0,
+            "retry released resources while the callback was active");
+    release.set_value();
+    retry.join();
+    require(completed && retirement.workerJoined() && retirement.retired() &&
+            active == 0 && refs.retired() && !refs.holdsReference() &&
+            backend.deleted == 1 && resources.calls == 1 &&
+            !owner.holdsCallbackContext() && platform.references == 0,
+            "successful retry did not clean up after the real worker join");
+    require(retirement.shutdownAndRetire() && backend.deleted == 1 &&
+            resources.calls == 1 && owner.shutdownAndJoin(),
+            "post-retry retirement was not idempotent");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "recovered teardown retained stale platform userdata");
+    }
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -1388,6 +1470,7 @@ int main() {
     testCompositeJniScopeOnOwnedCallbackWorker();
     testCompositeRefReleaseAfterWorkerJoin();
     testCompositeSessionRetirementAfterRealWorkerJoin();
+    testCompositeSessionRetirementFailedRemoveAndRecovery();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -1427,6 +1510,8 @@ int main() {
               << "M8_RENDERER_COMPOSITE_JNI_GLOBAL_REF_EXCEPTION_RETRY=PASS\n"
               << "M8_RENDERER_COMPOSITE_SESSION_RETIREMENT_POST_JOIN=PASS\n"
               << "M8_RENDERER_COMPOSITE_SESSION_RETIREMENT_EXACTLY_ONCE=PASS\n"
+              << "M8_RENDERER_SESSION_RETIREMENT_FAILED_REMOVE_RETAINS_RESOURCES=PASS\n"
+              << "M8_RENDERER_SESSION_RETIREMENT_REMOVE_RETRY_POST_JOIN=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

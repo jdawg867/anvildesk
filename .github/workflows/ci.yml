@@ -510,6 +510,46 @@ jobs:
           echo 'M8_COMPOSITE_OWNER_ARTIFACT_PREFLIGHT=PASS'
           echo 'M8_COMPOSITE_OWNER_DEVICE_EXECUTED=false'
 
+      - name: Link isolated composite JNI callback diagnostic for Android ARM64 (not loaded)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/27.2.12479018"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          "$bin/clang++" --target=aarch64-linux-android26 \
+            -std=c++17 -fPIC -shared -pthread -static-libstdc++ \
+            -O1 -Wall -Wextra -Werror -Wl,--no-undefined \
+            scripts/m8-android-composite-jni-diagnostic.cpp \
+            -landroid -o /tmp/libm8-composite-jni-diagnostic.so
+          "$bin/llvm-readelf" -h /tmp/libm8-composite-jni-diagnostic.so \
+            | grep -Eq 'Machine:.*AArch64'
+          "$bin/llvm-readelf" -d /tmp/libm8-composite-jni-diagnostic.so \
+            | tee /tmp/m8-composite-jni-diagnostic-deps.txt
+          grep -Fq 'libandroid.so' /tmp/m8-composite-jni-diagnostic-deps.txt
+          if grep -Eq 'libc\\+\\+_shared\\.so|libstdc\\+\\+\\.so|GLIBC_' \
+               /tmp/m8-composite-jni-diagnostic-deps.txt; then
+            echo 'STOP: unbundled C++ runtime dependency' >&2
+            exit 1
+          fi
+          "$bin/llvm-readelf" -Ws /tmp/libm8-composite-jni-diagnostic.so \
+            | grep -F 'Java_io_github_jdawg867_anvildesk_m8_M8CompositeJniDiagnostic_runProbe'
+          if "$bin/llvm-readelf" -Ws /tmp/libm8-composite-jni-diagnostic.so \
+               | grep -Fq 'JNI_OnLoad'; then
+            echo 'STOP: diagnostic must not provide JNI_OnLoad' >&2
+            exit 1
+          fi
+          echo 'M8_COMPOSITE_JNI_DIAGNOSTIC_ARM64_LINK=PASS'
+          echo 'M8_COMPOSITE_JNI_DIAGNOSTIC_ANDROID_EXECUTED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
+      - name: Retain isolated composite JNI callback Android ARM64 diagnostic
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-composite-jni-diagnostic-arm64
+          path: /tmp/libm8-composite-jni-diagnostic.so
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Cross-compile M8 composite session owner Android probe (not executed)
         shell: bash
         run: |

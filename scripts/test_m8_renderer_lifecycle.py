@@ -34,7 +34,7 @@ int LorieViewResources::xcallback(int fd, int events) {
 }
 void LorieViewResources::connect(jint fd) {
     ALooper_addFd(ALooper_forThread(), fd, 0, ALOOPER_EVENT_INPUT,
-              callback, this);
+              +[](int fd, int events, void* data) -> int { return ((LorieViewResources*) data)->xcallback(fd, events); }, this);
 }
 ALooper_addFd(ALooper_forThread(), fd, 0, ALOOPER_EVENT_INPUT,
               callback, this);
@@ -83,11 +83,10 @@ class RendererLifecycleAuditTests(unittest.TestCase):
         self.assertIn("M8_RENDERER_GLOBAL_JNI_REFERENCE_LIFETIME_VERIFIED=false", report)
 
     def test_global_registration_token_does_not_mask_drift_in_connect(self):
+        # An unrelated ALooper_addFd call remains elsewhere in SOURCE.
         moved = SOURCE.replace(
-            "    ALooper_addFd(ALooper_forThread(), fd, 0, ALOOPER_EVENT_INPUT,\n"
-            "              callback, this);",
-            "    ALooper_addFd(explicitLooper, fd, 0, ALOOPER_EVENT_INPUT,\n"
-            "              callback, this);",
+            "    ALooper_addFd(ALooper_forThread(), fd, 0, ALOOPER_EVENT_INPUT,\n",
+            "    ALooper_addFd(explicitLooper, fd, 0, ALOOPER_EVENT_INPUT,\n",
             1,
         )
         self.assertNotEqual(moved, SOURCE)
@@ -95,9 +94,11 @@ class RendererLifecycleAuditTests(unittest.TestCase):
             mod.audit(moved)
 
     def test_callback_userdata_nearby_unrelated_token_does_not_mask_drift(self):
+        # Only mutate the in-method callback userdata; do not change
+        # the duplicate registration outside connect().
         moved = SOURCE.replace(
-            "              callback, this);\n}",
-            "              callback, otherUserdata);\n}",
+            "xcallback(fd, events); }, this);",
+            "xcallback(fd, events); }, otherUserdata);",
             1,
         )
         self.assertNotEqual(moved, SOURCE)

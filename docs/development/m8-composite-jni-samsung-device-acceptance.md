@@ -90,10 +90,80 @@ The physical device success **does not change** the native-load gate:
 `M8_LORIE_CALLBACK_JNI_INTEGRATED=false` and
 `M8_NATIVE_LOAD_AUTHORIZED=false`.
 
+## Second physical Samsung run — real global-reference lifecycle (2026-11-14)
+
+**Status: PASS — user-provided output from updated, pinned test-only APKs.**
+This is a *second* physical device run, using the new diagnostic version. It
+does not supersede or retroactively alter the first test above.
+
+- Updated APK source commit: `e671a0711742980b5c6df283220660aa93b59d57`
+- Successful source PR workflow: `43570274527` (push `43570269979`)
+- Artifact: `m8-composite-jni-diagnostic-test-apks-arm64`
+- Artifact ID: `14104411442`
+- GitHub artifact metadata digest:
+  `sha256:4ff87bd54ef619d4a9643b2deda5fc7f44e629c5adba96f21fd84f800b6c50c8`
+- Artifact expiration: `2026-11-21T07:19:06Z`
+- Pinned verifier and runner/CI head: `5e3098bf71a7c993a3d2dea1bbb8981ff3c16104`
+- Successful verification workflow: PR `43570745263`, push `43570740184`
+- Physical target: Samsung SM-G766U, ARM64 (runner gate)
+
+The user's first attempt to execute the updated runner stopped with
+`STOP: exactly one online ADB device required` after the ADB daemon started.
+It did **not** install any APK in that attempt. A subsequent run succeeded:
+
+```text
+M8_ANDROID_AAPT_FOUND=PASS
+M8_COMPOSITE_JNI_APK_ARTIFACT_PREFLIGHT=PASS
+M8_COMPOSITE_JNI_TEST_ONLY_PACKAGE_ISOLATION=PASS
+M8_COMPOSITE_JNI_DEVICE_EXECUTED=false
+M8_NATIVE_LOAD_AUTHORIZED=false
+Installing separate M8 diagnostic target package (NOT AnvilDesk)...
+Performing Streamed Install
+Success
+Installing separate M8 diagnostic instrumentation APK...
+Performing Streamed Install
+Success
+M8_COMPOSITE_JNI_SEPARATE_PACKAGES_INSTALLED=PASS
+INSTRUMENTATION_STATUS: class=io.github.jdawg867.anvildesk.m8.M8CompositeJniDiagnosticInstrumentedTest
+INSTRUMENTATION_STATUS: test=ownedLooperCallbackAttachesToRealJVMAndJoins
+INSTRUMENTATION_STATUS_CODE: 0
+Time: 0.036
+OK (1 test)
+INSTRUMENTATION_CODE: -1
+M8_COMPOSITE_JNI_ANDROID_INSTRUMENTATION=PASS
+M8_COMPOSITE_JNI_ORIGINAL_APP_PATH_UNCHANGED=PASS
+M8_LORIE_CALLBACK_JNI_INTEGRATED=false
+M8_NATIVE_LOAD_AUTHORIZED=false
+```
+
+The *one* instrumentation test method calls **both** `runProbe()` (real JVM
+worker attachment/detachment) and `runGlobalRefProbe(new Object())`.
+The latter creates a genuine JNI global reference, accesses it with a
+worker-thread `JNIEnv*`, rejects a pre-join retirement request, deliberately
+creates and clears a test-only pending JNI exception to verify fail-closed
+retirement, and calls `DeleteGlobalRef` through the scoped JNI backend after
+the owned worker joins. The test asserts both probes return zero.
+
+This proves successful execution of the **tested sequence** and its
+invariants, not exhaustive race freedom, tracking of JNI global-reference
+table occupancy, or upstream renderer lifetime correctness. The runner
+confirmed only that the original app's *package path* remained unchanged;
+it does not directly attest app data integrity or separately print final
+diagnostic-package uninstall state. The early
+`M8_COMPOSITE_JNI_DEVICE_EXECUTED=false` marker belongs to the read-only
+preflight, not to the subsequent successful instrumentation.
+
+**Still unverified:** actual Lorie `connect/xcallback/nativeDestroy` and
+raw userdata ownership, destruction racing with Surface callbacks, real
+renderer Java globals/exception semantics, in-flight callback entry after
+deregistration in all failure interleavings, and native Xorg shutdown/restart.
+Production native loading stays prohibited and draft PR #21 stays unmerged.
+
 ## Next engineering gate
 
 Audit and source-lock a real replacement for the pinned Lorie callback's
 cross-thread stored `JNIEnv*` usage, resource/handle leases and destruction
-order. Prove global-reference lifetime and JNI exception handling first.
+order. Extend the real global-reference diagnostic evidence to Lorie-specific
+references and exception semantics only after source-level lifetime review.
 Then review separately gated integration tests before any renderer or native
 Xorg process is enabled. Draft PR #21 remains unmerged.

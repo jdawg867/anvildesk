@@ -65,6 +65,29 @@ queued in Android. The isolated Samsung JNI reference test does not supply
 the missing Lorie-specific lifetime guarantee. Continue keeping
 `M8_NATIVE_LOAD_AUTHORIZED=false` and PR #21 unmerged.
 
+## Pinned callback JNI dependency inventory
+
+The source-locked audit `scripts/audit-m8-lorie-callback-jni-inventory.py`
+enumerates all **seven** event cases in the pinned `xcallback`, its
+**17 JNI method calls**, and its renderer mutations. A separate upstream
+workflow runs this audit on the checked-out pinned `activity.cpp` after the
+isolated disconnect patch; mutation tests reject changed JNI call counts,
+event dispatch, Java references or renderer operations.
+
+The callback performs clipboard decode and Java callbacks, requests clipboard,
+updates shared server state and buffers, handles focus changes, sync replies,
+and recursive disconnects. Its single `DeleteLocalRef` call does not
+establish balanced local-reference cleanup for all temporary objects.
+No per-callback `GetEnv` / conditional attach, exception gate, reference
+lease or renderer lease is established by the original implementation.
+
+**Implication:** an owned-looper migration must cover the *entire callback*,
+not merely exchange `ALooper_forThread()` for an explicit looper. Its
+JNI locals, receiver/global references, renderer mutation and generation
+state must be scoped to the same terminal callback-owner lifetime.
+Source-inventory PASS means only that the known blocked source matches its
+pin. It never permits production native loading.
+
 ## Mandatory ownership/order contract for a future adapter
 
 1. **Construct owner before registration.** The renderer session must own a

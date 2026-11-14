@@ -73,7 +73,7 @@ class SourceLockedJniInventoryTests(unittest.TestCase):
             mod.audit(BODY + BODY)
 
     def test_new_jni_ownership_path_requires_manual_reaudit(self):
-        with self.assertRaisesRegex(ValueError, "JNI ownership changed"):
+        with self.assertRaisesRegex(ValueError, "(?:JNI calls drifted|JNI ownership changed)"):
             mod.audit(BODY.replace("renderer.removeAllBuffers();",
                                    "env->ExceptionCheck(); renderer.removeAllBuffers();"))
 

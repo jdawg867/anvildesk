@@ -1629,6 +1629,68 @@ static void testReplacementGenerationAndRecycledFdOwnership() {
                 "replaced callback left raw platform userdata registered");
     }
 }
+// Replacement must not reuse the retiring owner's callback session while
+// its old worker is still in an entered callback. A replacement owner may
+// register the recycled descriptor only after the old worker is joined.
+static void testReplacementAdmissionWaitsForPriorWorkerJoin() {
+    require(platform.references == 0, "prior test retained platform looper");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "prior test retained platform callback registration");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    constexpr int fd = 1950;
+    std::promise<void> entered, release;
+    auto enteredFuture = entered.get_future();
+    auto releaseFuture = release.get_future().share();
+    auto removedFuture = platform.removalSucceeded.get_future();
+    std::atomic<int> active{0};
+    CompositeRefCallbackData userdata{&entered, &releaseFuture, &active};
+    anvildesk_m8::RendererSessionOwnedLooper previous;
+    require(previous.registerCallback(1950, fd, ALOOPER_EVENT_INPUT,
+                                      heldRefCallback, &userdata),
+            "could not register previous replacement worker");
+    triggerEvent();
+    require(enteredFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready && active == 1,
+            "old generation callback not held active");
+    std::atomic<bool> joined{false};
+    std::thread stopping([&] { joined = previous.shutdownAndJoin(); });
+    require(removedFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "old callback registration not removed");
+    require(!joined && active == 1 && previous.holdsCallbackContext(),
+            "previous callback userdata released before join");
+    std::atomic<int> newCalls{0};
+    require(!previous.registerCallback(1951, fd, ALOOPER_EVENT_INPUT,
+                                       autoRemovingCallback, &newCalls),
+            "retiring owner admitted a replacement generation before join");
+    require(newCalls == 0 && active == 1 && !joined,
+            "replacement unexpectedly entered before old worker joined");
+    release.set_value();
+    stopping.join();
+    require(joined && active == 0 && !previous.holdsCallbackContext() &&
+            platform.references == 0,
+            "prior generation worker join did not complete");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "prior generation retained raw platform userdata");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    anvildesk_m8::RendererSessionOwnedLooper replacement;
+    require(replacement.registerCallback(1951, fd, ALOOPER_EVENT_INPUT,
+                                         autoRemovingCallback, &newCalls),
+            "replacement refused recycled descriptor after previous join");
+    require(replacement.shutdownAndJoin() && platform.references == 0 &&
+            !replacement.holdsCallbackContext() && newCalls == 0,
+            "replacement shutdown leaked platform state");
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -1651,6 +1713,7 @@ int main() {
     testCompositeSessionRetirementFailedRemoveAndRecovery();
     testRetirementLateCallbackAfterFailedRemove();
     testReplacementGenerationAndRecycledFdOwnership();
+    testReplacementAdmissionWaitsForPriorWorkerJoin();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -1696,6 +1759,8 @@ int main() {
               << "M8_SESSION_RETIREMENT_LATE_CALLBACK_POST_JOIN_RETIREMENT=PASS\n"
               << "M8_RENDERER_REPLACEMENT_REUSED_FD_STALE_GENERATION_REJECTED=PASS\n"
               << "M8_RENDERER_REPLACEMENT_NEW_GENERATION_CALLBACK=PASS\n"
+              << "M8_RENDERER_REPLACEMENT_BLOCKED_UNTIL_OLD_JOIN=PASS\n"
+              << "M8_RENDERER_REPLACEMENT_REUSED_FD_AFTER_JOIN=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

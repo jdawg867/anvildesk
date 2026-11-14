@@ -150,6 +150,16 @@ worker, a **new** owner may register the recycled FD and shut down cleanly.
 This is session-owner admission control, not a cross-process FD reservation;
 upstream Lorie and a real Java Surface remain unintegrated.
 
+**Competing shutdown callers while callback active:** the host harness
+holds an owned-loop callback open and starts two independent threads calling
+the same session retirement coordinator. Neither may complete cleanup until
+the callback exits and the owned worker joins. Both calls must complete
+successfully afterward while JNI reference deletion, renderer retirement
+and release of raw looper userdata each occur once. The test avoids probing
+owner or retirement mutexes from the blocked main thread. This remains
+fake-NDK host evidence only; Lorie and production Android teardown are
+still not authorized.
+
 **Limit:** this is a host protocol model with a synthetic worker join and
 renderer cleanup. It is not wired to `RendererSessionOwnedLooper`, to
 `LorieViewResources`, to a real Java Surface, or to Xorg. In particular,

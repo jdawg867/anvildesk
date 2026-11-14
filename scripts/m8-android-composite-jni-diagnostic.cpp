@@ -1,5 +1,6 @@
-// Isolated Android JNI/looper integration diagnostic. NOT packaged in APK.
-// A test-only Java harness must explicitly load this .so and call runProbe().
+// Isolated Android JNI/looper integration diagnostic. Packaged ONLY in the
+// explicitly opted-in instrumentation APK; never in the target or production APK.
+// A test-only Java harness explicitly loads this .so and calls its JNI probes.
 // No JNI_OnLoad, Lorie renderer, Xorg server, rootfs or app runtime.
 #include "m8-android-owned-looper-thread.cpp"
 #include "m8-renderer-session-owned-looper.h"

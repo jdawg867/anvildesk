@@ -45,7 +45,6 @@ env->DeleteGlobalRef(activity);
 ALooper_addFd(looper, fd, flags, cb, data);
 ALooper_removeFd(looper, fd);
 ALooper_removeFd(ALooper_forThread(), connFd);
-return ((LorieViewResources*) data)->xcallback(fd, events);
 ALOOPER_EVENT_HANGUP;
 MainActivity.clientConnectedStateChanged;
 {"nativeInit", "()J", (void *)&nativeInit},

@@ -29,6 +29,8 @@ public final class M8CompositeJniDiagnosticInstrumentedTest {
         System.load(binary.getAbsolutePath()); // Explicitly scoped to test process.
         assertEquals("Composite JNI callback probe failure stage", 0,
                 M8CompositeJniDiagnostic.runProbe());
+        assertEquals("Real JNI global reference retirement probe failure stage", 0,
+                M8CompositeJniDiagnostic.runGlobalRefProbe(new Object()));
         assertFalse(M8NativeLoadingPolicy.mayLoadLibrary(null));
     }
 }

@@ -4,7 +4,7 @@ set -euo pipefail
 # --verify-artifact is fully read-only. --run-on-device installs ONLY the
 # separate .m8jnidiag target and .test APKs, then uninstalls those two.
 REPO="jdawg867/anvildesk"
-RUN_ID="43561562356"
+RUN_ID="43570274527"
 ARTIFACT="m8-composite-jni-diagnostic-test-apks-arm64"
 TARGET="io.github.jdawg867.anvildesk.m8jnidiag"
 TEST="$TARGET.test"
@@ -22,6 +22,15 @@ done
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 verifier="$script_dir/verify-m8-composite-jni-test-apks.sh"
 [[ -f "$verifier" ]] || { echo "STOP: pinned read-only verifier missing" >&2; exit 1; }
+# Both the download and device execution must use the same immutable pin.
+grep -Fqx 'RUN_ID="43570274527"' "$verifier" || {
+  echo "STOP: verifier and runner workflow pins differ" >&2
+  exit 1
+}
+grep -Fqx 'EXPECTED_SHA="e671a0711742980b5c6df283220660aa93b59d57"' "$verifier" || {
+  echo "STOP: verifier source pin differs" >&2
+  exit 1
+}
 bash "$verifier" --verify-artifact
 if [[ "$mode" == "--verify-artifact" ]]; then
   echo 'M8_COMPOSITE_JNI_SAMSUNG_RUNNER_PREFLIGHT=PASS'

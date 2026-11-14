@@ -141,6 +141,15 @@ is freed until its respective worker joins. This covers a source-level
 replacement boundary, **not** delivery of a dangling platform userdata
 pointer or actual upstream Lorie connection replacement.
 
+**Replacement while old worker is joining:** a separate fake-NDK host
+regression holds the old generation's callback active, starts teardown,
+then attempts a replacement registration through the retiring session owner.
+The retiring owner must reject that registration while the old worker still
+holds callback userdata. After releasing the callback and joining the old
+worker, a **new** owner may register the recycled FD and shut down cleanly.
+This is session-owner admission control, not a cross-process FD reservation;
+upstream Lorie and a real Java Surface remain unintegrated.
+
 **Limit:** this is a host protocol model with a synthetic worker join and
 renderer cleanup. It is not wired to `RendererSessionOwnedLooper`, to
 `LorieViewResources`, to a real Java Surface, or to Xorg. In particular,

@@ -664,6 +664,39 @@ jobs:
           grep -Fx 'M8_RENDERER_ANDROID_CALLBACK_QUIESCENCE_VERIFIED=false' /tmp/m8-renderer-ownership-model.txt
           grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' /tmp/m8-renderer-ownership-model.txt
 
+      - name: Sanitize fail-closed M8 JNI global-reference retirement model
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -Wall -Wextra -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -Iscripts scripts/test_m8_renderer_jni_global_ref_retirement.cpp \
+            -o /tmp/m8-global-ref-retirement-test
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 20s /tmp/m8-global-ref-retirement-test \
+            | tee /tmp/m8-global-ref-retirement.txt
+          grep -Fx 'M8_JNI_GLOBAL_REF_PREJOIN_RETIRE_REJECTED=PASS' /tmp/m8-global-ref-retirement.txt
+          grep -Fx 'M8_JNI_GLOBAL_REF_UNATTACHED_RETRY=PASS' /tmp/m8-global-ref-retirement.txt
+          grep -Fx 'M8_JNI_GLOBAL_REF_PENDING_EXCEPTION_RETRY=PASS' /tmp/m8-global-ref-retirement.txt
+          grep -Fx 'M8_JNI_GLOBAL_REF_CONCURRENT_SINGLE_DELETE=PASS' /tmp/m8-global-ref-retirement.txt
+          grep -Fx 'M8_JNI_GLOBAL_REF_EMPTY_JOIN_GUARD=PASS' /tmp/m8-global-ref-retirement.txt
+          grep -Fx 'M8_LORIE_JNI_GLOBAL_REF_LIFETIME_VERIFIED=false' /tmp/m8-global-ref-retirement.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' /tmp/m8-global-ref-retirement.txt
+
+      - name: Compile isolated M8 JNI global-reference retirement against Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          printf '#include "m8-renderer-jni-global-ref-android.h"\nvoid m8_ref_probe(JavaVM* vm, jobject obj) { anvildesk_m8::AndroidGlobalRefRetirementBackend backend(vm); anvildesk_m8::DeferredGlobalRefRetirement<anvildesk_m8::AndroidGlobalRefRetirementBackend> refs(backend, obj); (void)refs.retireAfterVerifiedJoin(false); }\n' \
+            | "$bin/clang++" --target=aarch64-linux-android26 \
+                -std=c++17 -Wall -Wextra -Werror -Iscripts \
+                -x c++ -fsyntax-only -
+          echo 'M8_JNI_GLOBAL_REF_RETIREMENT_ARM64_NDK_COMPILE=PASS'
+          echo 'M8_LORIE_JNI_GLOBAL_REF_LIFETIME_VERIFIED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
       - name: Sanitize isolated M8 per-callback JNI thread scope
         shell: bash
         run: |

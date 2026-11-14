@@ -303,6 +303,8 @@ jobs:
           grep -Fx 'M8_RENDERER_COMPOSITE_JNI_GLOBAL_REF_EXCEPTION_RETRY=PASS' m8-owned-looper-host-test.txt
           grep -Fx 'M8_RENDERER_COMPOSITE_SESSION_RETIREMENT_POST_JOIN=PASS' m8-owned-looper-host-test.txt
           grep -Fx 'M8_RENDERER_COMPOSITE_SESSION_RETIREMENT_EXACTLY_ONCE=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_SESSION_RETIREMENT_FAILED_REMOVE_RETAINS_RESOURCES=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_SESSION_RETIREMENT_REMOVE_RETRY_POST_JOIN=PASS' m8-owned-looper-host-test.txt
           grep -Fx 'M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS' m8-owned-looper-host-test.txt
           grep -Fx 'M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false' m8-owned-looper-host-test.txt
           grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-owned-looper-host-test.txt

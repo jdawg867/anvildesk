@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # required for authenticated read-only artifact preflight
 
 jobs:
   build:
@@ -80,8 +81,788 @@ jobs:
           echo "available=true" >> "$GITHUB_OUTPUT"
           echo "keystore_path=$keystore" >> "$GITHUB_OUTPUT"
 
+      - name: Validate read-only production upgrade gate syntax
+        run: bash -n scripts/verify-m8-production-upgrade.sh
+
+      - name: Verify M8 isolated process remains disabled
+        run: |
+          python3 scripts/verify-m8-secondary-process.py \
+            app/src/main/AndroidManifest.xml \
+            app/src/main/java/io/github/jdawg867/anvildesk/m8/M8X11ProcessService.java
+
+      - name: Verify standalone M8 native callback drain (native load remains disabled)
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O2 -Wall -Wextra -Werror \
+            scripts/test_m8_native_callback_drain.cpp \
+            -o /tmp/m8-test-native-callback-drain
+          timeout 20s /tmp/m8-test-native-callback-drain | tee m8-native-callback-drain-test.txt
+          grep -Fx 'M8_NATIVE_CALLBACK_DRAIN_SYNTHETIC_TEST=PASS' m8-native-callback-drain-test.txt
+          grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-native-callback-drain-test.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-native-callback-drain-test.txt
+
+      - name: Sanitize M8 callback-drain host concurrency test
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Wall -Wextra -Werror \
+            scripts/test_m8_native_callback_drain.cpp \
+            -o /tmp/m8-test-native-callback-drain-sanitized
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 30s /tmp/m8-test-native-callback-drain-sanitized \
+            | tee m8-native-callback-drain-sanitized.txt
+          grep -Fx 'M8_NATIVE_CALLBACK_DRAIN_SYNTHETIC_TEST=PASS' m8-native-callback-drain-sanitized.txt
+          grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-native-callback-drain-sanitized.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-native-callback-drain-sanitized.txt
+
+      - name: Verify host-only M8 callback registration lifetime model
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Wall -Wextra -Werror \
+            scripts/test_m8_callback_registration_lifetime.cpp \
+            -o /tmp/m8-test-registration-lifetime
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 30s /tmp/m8-test-registration-lifetime \
+            | tee m8-callback-registration-lifetime.txt
+          grep -Fx 'M8_CALLBACK_REGISTRATION_HOST_MODEL=PASS' m8-callback-registration-lifetime.txt
+          grep -Fx 'M8_ANDROID_RAW_USERDATA_LIFETIME_VERIFIED=false' m8-callback-registration-lifetime.txt
+          grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-callback-registration-lifetime.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-callback-registration-lifetime.txt
+
+      - name: Sanitize host-only M8 callback token registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Wall -Wextra -Werror \
+            scripts/test_m8_callback_token_registry.cpp \
+            -o /tmp/m8-test-callback-token-registry
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 30s /tmp/m8-test-callback-token-registry \
+            | tee m8-callback-token-registry-test.txt
+          grep -Fx 'M8_CALLBACK_TOKEN_REGISTRY_HOST_MODEL=PASS' m8-callback-token-registry-test.txt
+          grep -Fx 'M8_ANDROID_USERDATA_TOKEN_ENCODING_VERIFIED=false' m8-callback-token-registry-test.txt
+          grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-callback-token-registry-test.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-callback-token-registry-test.txt
+
+      - name: Sanitize M8 fake Android looper removal model
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Wall -Wextra -Werror \
+            scripts/test_m8_fake_looper_removal.cpp \
+            -o /tmp/m8-test-fake-looper-removal
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 30s /tmp/m8-test-fake-looper-removal \
+            | tee m8-fake-looper-removal-test.txt
+          grep -Fx 'M8_FAKE_LOOPER_REMOVAL_MODEL=PASS' m8-fake-looper-removal-test.txt
+          grep -Fx 'M8_ANDROID_RAW_USERDATA_LIFETIME_VERIFIED=false' m8-fake-looper-removal-test.txt
+          grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-fake-looper-removal-test.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-fake-looper-removal-test.txt
+
+      - name: Sanitize M8 looper teardown phase gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Wall -Wextra -Werror \
+            scripts/test_m8_looper_teardown_gate.cpp \
+            -o /tmp/m8-test-looper-teardown-gate
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 30s /tmp/m8-test-looper-teardown-gate \
+            | tee m8-looper-teardown-gate-test.txt
+          grep -Fx 'M8_LOOPER_TEARDOWN_GATE_HOST_MODEL=PASS' m8-looper-teardown-gate-test.txt
+          grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-looper-teardown-gate-test.txt
+          grep -Fx 'M8_NATIVE_RESOURCE_RELEASE_AUTHORIZED=false' m8-looper-teardown-gate-test.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-looper-teardown-gate-test.txt
+
+      - name: Sanitize concurrent M8 NDK coordinator with isolated host looper shim
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Compile the ACTUAL adapter against a host-only test shim.
+          # Real Android NDK headers are verified in the following step.
+          c++ -std=c++17 -pthread -D__ANDROID__ \
+            -Iscripts/m8-test-shim -O1 -g -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Wall -Wextra -Werror \
+            scripts/test_m8_ndk_coordinator_concurrency.cpp \
+            -o /tmp/m8-test-ndk-coordinator-host
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 30s /tmp/m8-test-ndk-coordinator-host \
+            | tee m8-ndk-coordinator-host-test.txt
+          grep -Fx 'M8_NDK_COORDINATOR_HOST_CONCURRENCY=PASS' m8-ndk-coordinator-host-test.txt
+          grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-ndk-coordinator-host-test.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-ndk-coordinator-host-test.txt
+
+      - name: Sanitize host raw-userdata callback dispatch ordering
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Wall -Wextra -Werror \
+            scripts/test_m8_raw_userdata_dispatch_order.cpp \
+            -o /tmp/m8-test-raw-userdata-dispatch
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 30s /tmp/m8-test-raw-userdata-dispatch \
+            | tee m8-raw-userdata-dispatch-test.txt
+          grep -Fx 'M8_RAW_USERDATA_HOST_DISPATCH_ORDER=PASS' m8-raw-userdata-dispatch-test.txt
+          grep -Fx 'M8_ANDROID_DISPATCH_THREAD_JOIN_VERIFIED=false' m8-raw-userdata-dispatch-test.txt
+          grep -Fx 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false' m8-raw-userdata-dispatch-test.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-raw-userdata-dispatch-test.txt
+
+      - name: Cross-compile isolated M8 Android NDK looper ownership adapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/27.2.12479018"
+          clang="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++"
+          test -x "$clang"
+          "$clang" --target=aarch64-linux-android26 -std=c++17 \
+            -Wall -Wextra -Werror -fsyntax-only \
+            scripts/m8-android-looper-ndk-compile.cpp
+          grep -Fq 'No runtime registration, JNI loading or production integration.' \
+            scripts/m8-android-looper-ndk-compile.cpp
+          grep -Fq 'AddStatus add(int fd, int events, ALooper_callbackFunc callback,' \
+            scripts/m8-android-looper-ndk-compile.cpp
+          echo 'M8_NDK_LOOPER_REGISTRATION_SIGNATURE=PASS'
+          echo 'M8_NDK_LOOPER_HEADER_COMPILE=PASS'
+          echo 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
+      - name: Sanitize owned-looper callback shutdown with host execution shim
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Executes the actual compile-only Android class with fake NDK calls.
+          # No emulator or Android runtime is exercised by this step.
+          c++ -std=c++17 -pthread -D__ANDROID__ \
+            -Iscripts/m8-owned-looper-test-shim -O1 -g -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Wall -Wextra -Werror \
+            scripts/test_m8_owned_looper_host_execution.cpp \
+            -o /tmp/m8-test-owned-looper-host
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 30s /tmp/m8-test-owned-looper-host \
+            | tee m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_HOST_EXECUTION=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_CALLBACK_PREPARE_THREAD_MATCH=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_POST_REMOVE_EVENT_SUPPRESSED=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_POST_REMOVE_REGISTRATION_REJECTED=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_IDLE_SHUTDOWN=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_INVALID_REGISTRATION_REJECTED=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_ADD_FD_FAILURE_RECOVERY=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_PREPARE_FAILURE_RECOVERY=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_CALLBACK_AUTO_REMOVE=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_AUTO_REMOVE_REDELIVERY_REJECTED=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_REMOVE_FD_ZERO_ACCEPTED=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_AUTO_REMOVE_REJOIN_IDEMPOTENT=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_EXACT_REFERENCE_BALANCE=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_REMOVE_FAILURE_RETAINS_REFERENCE=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_REPEATED_REMOVE_FAILURE_RECOVERY=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_OWNERSHIP_FAKE_LOOPER_JOIN_BOUNDARY=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_OWNERSHIP_FAILED_REMOVE_RETRY_JOIN=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_UNIFIED_OWNER_FAILED_REMOVE_RETRY=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_UNIFIED_OWNER_CONCURRENT_CALLBACK_DRAIN=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_UNIFIED_OWNER_SELF_JOIN_REJECTED=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_WORKER_MUTEX_OPERATIONS_REJECTED=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_UNIFIED_OWNER_ADD_FAILURE_RECOVERY=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_UNIFIED_OWNER_PREPARE_FAILURE_RECOVERY=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_UNIFIED_OWNER_CALLBACK_AUTO_REMOVAL=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_UNIFIED_OWNER_IDLE_FINAL_SHUTDOWN=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_UNIFIED_OWNER_HEAP_USERDATA_POST_JOIN_FREE=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_SESSION_COMPOSITE_FAILED_REMOVE_JOIN=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_SESSION_COMPOSITE_AUTO_REMOVE_FRESH_GENERATION=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_SESSION_COMPOSITE_CONCURRENT_SELF_JOIN_GUARD=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_SESSION_COMPOSITE_FAILED_REMOVE_LATE_CALLBACK_REJECTED=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_SESSION_COMPOSITE_ADD_FAILURE_IDLE_CLOSE=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_COMPOSITE_JNI_SCOPE_WORKER_JOIN=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_COMPOSITE_JNI_ATTACH_FAILURE_FAIL_CLOSED=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_COMPOSITE_JNI_GLOBAL_REF_POST_JOIN=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_RENDERER_COMPOSITE_JNI_GLOBAL_REF_EXCEPTION_RETRY=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-owned-looper-host-test.txt
+
+      - name: Cross-compile dedicated M8 Android looper-thread shutdown prototype
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/27.2.12479018"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$bin/clang++"
+          "$bin/clang++" --target=aarch64-linux-android26 \
+            -std=c++17 -pthread -Wall -Wextra -Werror -fsyntax-only \
+            scripts/m8-android-owned-looper-thread.cpp
+          # This probe is NOT linked into the Android app or launched.
+          echo 'M8_ANDROID_OWNED_LOOPER_THREAD_COMPILE=PASS'
+          echo 'M8_ANDROID_CALLBACK_THREAD_RUNTIME_VERIFIED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
+      - name: Verify isolated M8 Samsung ADB runner syntax (never execute in CI)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq 'RUN_ID="42711544114"' scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq 'EXPECTED_SHA="871264cc1872d980b5e59f5ab71ac1a70bf7b9a5"' scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq '[[ "$model" == "SM-G766U" ]]' scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq 'EXPECTED_ARTIFACT_ID="13716750305"' scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq 'EXPECTED_ARTIFACT_DIGEST="sha256:da3f0141f60c49d8d11ce475c3f84aee06675d207ebcd49c208a7db0ce89ed2c"' scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq "readelf -l" scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq 'libandroid.so' scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq -- '--verify-artifact' scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq 'M8_ARTIFACT_ONLY_PREFLIGHT=PASS' scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq 'M8_ANDROID_DEVICE_PROBE_EXECUTED=false' scripts/run-m8-owned-looper-device-probe.sh
+          grep -Fq -- '--run-on-device' scripts/run-m8-owned-looper-device-probe.sh
+          echo 'M8_SAMSUNG_PROBE_RUNNER_SYNTAX=PASS'
+          echo 'M8_ANDROID_DEVICE_PROBE_EXECUTED=false'
+
+      - name: Exercise M8 artifact-only verification without ADB
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The pinned probe is a short-lived artifact. Do not fail future CI
+          # after its retention expires; report the preflight as skipped.
+          expired="$(gh api repos/jdawg867/anvildesk/actions/artifacts/13716750305 --jq '.expired')"
+          if [[ "$expired" == "true" ]]; then
+            echo 'M8_ARTIFACT_PREFLIGHT_SKIPPED_EXPIRED=true'
+            exit 0
+          fi
+          [[ "$expired" == "false" ]] || {
+            echo 'STOP: unexpected artifact expiration status' >&2
+            exit 1
+          }
+          bash scripts/run-m8-owned-looper-device-probe.sh --verify-artifact \
+            | tee m8-artifact-only-preflight.txt
+          grep -Fx 'M8_ARTIFACT_ONLY_PREFLIGHT=PASS' m8-artifact-only-preflight.txt
+          grep -Fx 'M8_ANDROID_DEVICE_PROBE_EXECUTED=false' m8-artifact-only-preflight.txt
+
+      - name: Build standalone M8 owned-looper Android runtime test (not executed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/27.2.12479018"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$bin/clang++"
+          # ADB /data/local/tmp has no bundled libc++_shared.so. Link the
+          # C++ runtime statically so the executable remains standalone.
+          "$bin/clang++" --target=aarch64-linux-android26 \
+            -std=c++17 -pthread -static-libstdc++ -O1 -Wall -Wextra -Werror \
+            -Wl,--no-undefined \
+            scripts/m8-android-owned-looper-device-probe.cpp \
+            -landroid -o /tmp/m8-android-owned-looper-device-probe
+          "$bin/llvm-readelf" -h /tmp/m8-android-owned-looper-device-probe \
+            | grep -Eq 'Machine:.*AArch64'
+          "$bin/llvm-readelf" -d /tmp/m8-android-owned-looper-device-probe \
+            | tee /tmp/m8-owned-looper-dependencies.txt
+          grep -Fq 'libandroid.so' /tmp/m8-owned-looper-dependencies.txt
+          if grep -Eq 'libc\\+\\+_shared\\.so|libstdc\\+\\+\\.so|GLIBC_' \
+               /tmp/m8-owned-looper-dependencies.txt; then
+            echo 'STOP: Android probe depends on a non-bundled C++ runtime' >&2
+            exit 1
+          fi
+          grep -Fq 'M8_ANDROID_LOOPER_POST_JOIN_REGISTRATION_REJECTED=PASS' \
+            scripts/m8-android-owned-looper-device-probe.cpp
+          echo 'M8_ANDROID_LOOPER_POST_JOIN_REGRESSION_COMPILED=true'
+          echo 'M8_ANDROID_DEVICE_PROBE_STANDALONE_CPP_RUNTIME=PASS'
+          echo 'M8_ANDROID_DEVICE_PROBE_BUILD=PASS'
+          echo 'M8_ANDROID_DEVICE_PROBE_EXECUTED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
+      - name: Retain standalone M8 Android looper device test
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-owned-looper-device-probe-arm64
+          path: /tmp/m8-android-owned-looper-device-probe
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Validate pinned Samsung unified-owner probe runner (not executed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/run-m8-unified-owner-device-probe.sh
+          grep -Fqx 'RUN_ID="43319679610"' scripts/run-m8-unified-owner-device-probe.sh
+          grep -Fqx 'EXPECTED_SHA="8a9767971fd21689bd16e70b4c8a4510f737779a"' scripts/run-m8-unified-owner-device-probe.sh
+          grep -Fqx 'EXPECTED_ARTIFACT_ID="13989353189"' scripts/run-m8-unified-owner-device-probe.sh
+          grep -Fqx 'EXPECTED_ARTIFACT_DIGEST="sha256:bbac900b551b143add444fb0904fb37af2a5af2254415a4695a90ab6273288c7"' scripts/run-m8-unified-owner-device-probe.sh
+          echo 'M8_UNIFIED_OWNER_RUNNER_PINNING=PASS'
+          echo 'M8_UNIFIED_OWNER_DEVICE_EXECUTED=false'
+
+      - name: Exercise pinned M8 unified-owner artifact preflight without ADB
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The exact pinned artifact has 7-day retention. Report an expired
+          # artifact honestly, rather than silently using a different build.
+          expired="$(gh api repos/jdawg867/anvildesk/actions/artifacts/13989353189 --jq '.expired')"
+          if [[ "$expired" == "true" ]]; then
+            echo 'M8_UNIFIED_OWNER_ARTIFACT_PREFLIGHT_SKIPPED_EXPIRED=true'
+            echo 'M8_UNIFIED_OWNER_DEVICE_EXECUTED=false'
+            exit 0
+          fi
+          [[ "$expired" == "false" ]] || {
+            echo 'STOP: unexpected unified-owner artifact status' >&2
+            exit 1
+          }
+          bash scripts/run-m8-unified-owner-device-probe.sh --verify-artifact \
+            | tee m8-unified-owner-artifact-preflight.txt
+          grep -Fx 'M8_ARTIFACT_ONLY_PREFLIGHT=PASS' m8-unified-owner-artifact-preflight.txt
+          grep -Fx 'M8_ANDROID_DEVICE_PROBE_EXECUTED=false' m8-unified-owner-artifact-preflight.txt
+          echo 'M8_UNIFIED_OWNER_ARTIFACT_PREFLIGHT=PASS'
+          echo 'M8_UNIFIED_OWNER_DEVICE_EXECUTED=false'
+
+      - name: Build isolated M8 unified-owner Android ARM64 probe (not executed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/27.2.12479018"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$bin/clang++"
+          "$bin/clang++" --target=aarch64-linux-android26 \
+            -std=c++17 -pthread -static-libstdc++ -O1 -Wall -Wextra -Werror \
+            -Wl,--no-undefined \
+            scripts/m8-android-unified-owner-device-probe.cpp \
+            -landroid -o /tmp/m8-android-unified-owner-device-probe
+          "$bin/llvm-readelf" -h /tmp/m8-android-unified-owner-device-probe \
+            | grep -Eq 'Machine:.*AArch64'
+          "$bin/llvm-readelf" -d /tmp/m8-android-unified-owner-device-probe \
+            | tee /tmp/m8-unified-owner-probe-dependencies.txt
+          grep -Fq 'libandroid.so' /tmp/m8-unified-owner-probe-dependencies.txt
+          if grep -Eq 'libc\\+\\+_shared\\.so|libstdc\\+\\+\\.so|GLIBC_' \
+               /tmp/m8-unified-owner-probe-dependencies.txt; then
+            echo 'STOP: unified owner probe has unbundled C++ dependency' >&2
+            exit 1
+          fi
+          grep -Fq 'M8_ANDROID_UNIFIED_OWNER_POST_JOIN_HEAP_FREE=PASS' \
+            scripts/m8-android-unified-owner-device-probe.cpp
+          echo 'M8_ANDROID_UNIFIED_OWNER_PROBE_ARM64_BUILD=PASS'
+          echo 'M8_ANDROID_UNIFIED_OWNER_DEVICE_EXECUTED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
+      - name: Retain isolated M8 unified owner ARM64 device probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-unified-owner-device-probe-arm64
+          path: /tmp/m8-android-unified-owner-device-probe
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Validate pinned Samsung composite owner runner (not executed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/run-m8-composite-owner-device-probe.sh
+          grep -Fqx 'RUN_ID="43537453762"' scripts/run-m8-composite-owner-device-probe.sh
+          grep -Fqx 'EXPECTED_SHA="c26fc7d05d1b9be19c04bc1e6cb8517e53715698"' scripts/run-m8-composite-owner-device-probe.sh
+          grep -Fqx 'EXPECTED_ARTIFACT_ID="14090591718"' scripts/run-m8-composite-owner-device-probe.sh
+          grep -Fqx 'EXPECTED_ARTIFACT_DIGEST="sha256:3708eef7fe09d81a54ceac495bd449fa6d21a58a986b847c0d03fd6f97df6c40"' scripts/run-m8-composite-owner-device-probe.sh
+          echo 'M8_COMPOSITE_OWNER_RUNNER_PINNING=PASS'
+          echo 'M8_COMPOSITE_OWNER_DEVICE_EXECUTED=false'
+
+      - name: Exercise pinned composite owner artifact preflight without ADB
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          expired="$(gh api repos/jdawg867/anvildesk/actions/artifacts/14090591718 --jq '.expired')"
+          if [[ "$expired" == "true" ]]; then
+            echo 'M8_COMPOSITE_OWNER_PREFLIGHT_SKIPPED_EXPIRED=true'
+            echo 'M8_COMPOSITE_OWNER_DEVICE_EXECUTED=false'
+            exit 0
+          fi
+          [[ "$expired" == "false" ]] || {
+            echo 'STOP: unexpected composite artifact expiration state' >&2
+            exit 1
+          }
+          bash scripts/run-m8-composite-owner-device-probe.sh --verify-artifact \
+            | tee /tmp/m8-composite-owner-artifact-preflight.txt
+          grep -Fx 'M8_ARTIFACT_ONLY_PREFLIGHT=PASS' /tmp/m8-composite-owner-artifact-preflight.txt
+          grep -Fx 'M8_ANDROID_DEVICE_PROBE_EXECUTED=false' /tmp/m8-composite-owner-artifact-preflight.txt
+          echo 'M8_COMPOSITE_OWNER_ARTIFACT_PREFLIGHT=PASS'
+          echo 'M8_COMPOSITE_OWNER_DEVICE_EXECUTED=false'
+
+      - name: Link isolated composite JNI callback diagnostic for Android ARM64 (not loaded)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/27.2.12479018"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          "$bin/clang++" --target=aarch64-linux-android26 \
+            -std=c++17 -fPIC -shared -pthread -static-libstdc++ \
+            -O1 -Wall -Wextra -Werror -Wl,--no-undefined \
+            scripts/m8-android-composite-jni-diagnostic.cpp \
+            -landroid -o /tmp/libm8-composite-jni-diagnostic.so
+          "$bin/llvm-readelf" -h /tmp/libm8-composite-jni-diagnostic.so \
+            | grep -Eq 'Machine:.*AArch64'
+          "$bin/llvm-readelf" -d /tmp/libm8-composite-jni-diagnostic.so \
+            | tee /tmp/m8-composite-jni-diagnostic-deps.txt
+          grep -Fq 'libandroid.so' /tmp/m8-composite-jni-diagnostic-deps.txt
+          if grep -Eq 'libc\\+\\+_shared\\.so|libstdc\\+\\+\\.so|GLIBC_' \
+               /tmp/m8-composite-jni-diagnostic-deps.txt; then
+            echo 'STOP: unbundled C++ runtime dependency' >&2
+            exit 1
+          fi
+          "$bin/llvm-readelf" -Ws /tmp/libm8-composite-jni-diagnostic.so \
+            | grep -F 'Java_io_github_jdawg867_anvildesk_m8_M8CompositeJniDiagnostic_runProbe'
+          if "$bin/llvm-readelf" -Ws /tmp/libm8-composite-jni-diagnostic.so \
+               | grep -Fq 'JNI_OnLoad'; then
+            echo 'STOP: diagnostic must not provide JNI_OnLoad' >&2
+            exit 1
+          fi
+          echo 'M8_COMPOSITE_JNI_DIAGNOSTIC_ARM64_LINK=PASS'
+          echo 'M8_COMPOSITE_JNI_DIAGNOSTIC_ANDROID_EXECUTED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
+      - name: Retain isolated composite JNI callback Android ARM64 diagnostic
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-composite-jni-diagnostic-arm64
+          path: /tmp/libm8-composite-jni-diagnostic.so
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Cross-compile M8 composite session owner Android probe (not executed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/27.2.12479018"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$bin/clang++"
+          "$bin/clang++" --target=aarch64-linux-android26 \
+            -std=c++17 -pthread -static-libstdc++ -O1 -Wall -Wextra -Werror \
+            -Wl,--no-undefined \
+            scripts/m8-android-composite-owner-device-probe.cpp \
+            -landroid -o /tmp/m8-android-composite-owner-device-probe
+          "$bin/llvm-readelf" -h /tmp/m8-android-composite-owner-device-probe \
+            | grep -Eq 'Machine:.*AArch64'
+          "$bin/llvm-readelf" -d /tmp/m8-android-composite-owner-device-probe \
+            | tee /tmp/m8-composite-owner-deps.txt
+          grep -Fq 'libandroid.so' /tmp/m8-composite-owner-deps.txt
+          if grep -Eq 'libc\\+\\+_shared\\.so|libstdc\\+\\+\\.so|GLIBC_' \
+               /tmp/m8-composite-owner-deps.txt; then
+            echo 'STOP: composite owner probe has unbundled C++ dependency' >&2
+            exit 1
+          fi
+          grep -Fq 'M8_ANDROID_COMPOSITE_CONTEXT_RELEASE_AFTER_JOIN=PASS' \
+            scripts/m8-android-composite-owner-device-probe.cpp
+          echo 'M8_ANDROID_COMPOSITE_OWNER_ARM64_BUILD=PASS'
+          echo 'M8_ANDROID_COMPOSITE_OWNER_DEVICE_EXECUTED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
+      - name: Retain isolated M8 composite owner Android device probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-composite-owner-device-probe-arm64
+          path: /tmp/m8-android-composite-owner-device-probe
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Link isolated owned-looper ARM64 probe with real Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/27.2.12479018"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$bin/clang++"
+          "$bin/clang++" --target=aarch64-linux-android26 -std=c++17 \
+            -fPIC -shared -pthread -O0 -Wall -Wextra -Werror \
+            -Wl,--no-undefined \
+            scripts/m8-android-owned-looper-link-probe.cpp \
+            -landroid -o /tmp/m8-owned-looper-link-probe.so
+          "$bin/llvm-readelf" -h /tmp/m8-owned-looper-link-probe.so \
+            | grep -Eq 'Machine:.*AArch64'
+          "$bin/llvm-readelf" -d /tmp/m8-owned-looper-link-probe.so \
+            | grep -Fq 'libandroid.so'
+          "$bin/llvm-nm" -D --defined-only /tmp/m8-owned-looper-link-probe.so \
+            | grep -Fq 'anvildesk_m8_owned_looper_link_probe'
+          echo 'M8_OWNED_LOOPER_ARM64_LINK=PASS'
+          echo 'M8_ANDROID_CALLBACK_THREAD_RUNTIME_VERIFIED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
+      - name: Link isolated ARM64 Android looper probe against libandroid
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/27.2.12479018"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$bin/clang++"
+          "$bin/clang++" --target=aarch64-linux-android26 -std=c++17 \
+            -fPIC -shared -O0 -Wall -Wextra -Werror \
+            -Wl,--no-undefined \
+            scripts/m8-android-looper-ndk-link-probe.cpp \
+            -landroid -o /tmp/m8-ndk-looper-link-probe.so
+          "$bin/llvm-readelf" -h /tmp/m8-ndk-looper-link-probe.so \
+            | grep -Eq 'Machine:.*AArch64'
+          "$bin/llvm-readelf" -d /tmp/m8-ndk-looper-link-probe.so \
+            | grep -Fq 'libandroid.so'
+          # No APK packaging, loading, or execution of this probe.
+          echo 'M8_NDK_LOOPER_ARM64_LINK=PASS'
+          echo 'M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
+      - name: Test isolated M8 callback admission and drain gate (host only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -Wall -Wextra -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            scripts/m8-renderer-callback-gate-host-test.cpp \
+            -o /tmp/m8-renderer-callback-gate-host-test
+          ASAN_OPTIONS=detect_leaks=1 \
+            timeout 20s /tmp/m8-renderer-callback-gate-host-test \
+            | tee /tmp/m8-renderer-callback-gate-results.txt
+          grep -Fx 'M8_CALLBACK_GATE_HOST_DRAIN=PASS' /tmp/m8-renderer-callback-gate-results.txt
+          grep -Fx 'M8_CALLBACK_GATE_MULTIPLE_ACTIVE_DRAIN=PASS' /tmp/m8-renderer-callback-gate-results.txt
+          grep -Fx 'M8_CALLBACK_GATE_POST_STOP_ENTRY_REJECTED=PASS' /tmp/m8-renderer-callback-gate-results.txt
+          grep -Fx 'M8_ANDROID_LOOPER_CALLBACK_QUIESCENCE_VERIFIED=false' /tmp/m8-renderer-callback-gate-results.txt
+          grep -Fx 'M8_RENDERER_JNI_LIFECYCLE_VERIFIED=false' /tmp/m8-renderer-callback-gate-results.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' /tmp/m8-renderer-callback-gate-results.txt
+
+      - name: Verify M8 renderer ownership protocol model (host only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -Wall -Wextra -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -Iscripts scripts/test_m8_renderer_callback_ownership_model.cpp \
+            -o /tmp/m8-renderer-ownership-model
+          ASAN_OPTIONS=detect_leaks=1 timeout 20s \
+            /tmp/m8-renderer-ownership-model \
+            | tee /tmp/m8-renderer-ownership-model.txt
+          grep -Fx 'M8_RENDERER_OWNERSHIP_MODEL_FAILURE_RETRY=PASS' /tmp/m8-renderer-ownership-model.txt
+          grep -Fx 'M8_RENDERER_OWNERSHIP_MODEL_JOIN_BEFORE_FREE=PASS' /tmp/m8-renderer-ownership-model.txt
+          grep -Fx 'M8_RENDERER_OWNERSHIP_MODEL_TERMINAL_RELEASE=PASS' /tmp/m8-renderer-ownership-model.txt
+          grep -Fx 'M8_RENDERER_ANDROID_CALLBACK_QUIESCENCE_VERIFIED=false' /tmp/m8-renderer-ownership-model.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' /tmp/m8-renderer-ownership-model.txt
+
+      - name: Sanitize fail-closed M8 JNI global-reference retirement model
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -Wall -Wextra -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -Iscripts scripts/test_m8_renderer_jni_global_ref_retirement.cpp \
+            -o /tmp/m8-global-ref-retirement-test
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 20s /tmp/m8-global-ref-retirement-test \
+            | tee /tmp/m8-global-ref-retirement.txt
+          grep -Fx 'M8_JNI_GLOBAL_REF_PREJOIN_RETIRE_REJECTED=PASS' /tmp/m8-global-ref-retirement.txt
+          grep -Fx 'M8_JNI_GLOBAL_REF_UNATTACHED_RETRY=PASS' /tmp/m8-global-ref-retirement.txt
+          grep -Fx 'M8_JNI_GLOBAL_REF_PENDING_EXCEPTION_RETRY=PASS' /tmp/m8-global-ref-retirement.txt
+          grep -Fx 'M8_JNI_GLOBAL_REF_CONCURRENT_SINGLE_DELETE=PASS' /tmp/m8-global-ref-retirement.txt
+          grep -Fx 'M8_JNI_GLOBAL_REF_EMPTY_JOIN_GUARD=PASS' /tmp/m8-global-ref-retirement.txt
+          grep -Fx 'M8_LORIE_JNI_GLOBAL_REF_LIFETIME_VERIFIED=false' /tmp/m8-global-ref-retirement.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' /tmp/m8-global-ref-retirement.txt
+
+      - name: Compile isolated M8 JNI global-reference retirement against Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          printf '#include "m8-renderer-jni-global-ref-android.h"\nvoid m8_ref_probe(JavaVM* vm, jobject obj) { anvildesk_m8::AndroidGlobalRefRetirementBackend backend(vm); anvildesk_m8::DeferredGlobalRefRetirement<anvildesk_m8::AndroidGlobalRefRetirementBackend> refs(backend, obj); (void)refs.retireAfterVerifiedJoin(false); }\n' \
+            | "$bin/clang++" --target=aarch64-linux-android26 \
+                -std=c++17 -Wall -Wextra -Werror -Iscripts \
+                -x c++ -fsyntax-only -
+          echo 'M8_JNI_GLOBAL_REF_RETIREMENT_ARM64_NDK_COMPILE=PASS'
+          echo 'M8_LORIE_JNI_GLOBAL_REF_LIFETIME_VERIFIED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
+      - name: Sanitize isolated M8 per-callback JNI thread scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -Wall -Wextra -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -Iscripts scripts/test_m8_renderer_callback_jni_scope.cpp \
+            -o /tmp/m8-jni-thread-scope-test
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 20s /tmp/m8-jni-thread-scope-test \
+            | tee /tmp/m8-jni-thread-scope-test.txt
+          grep -Fx 'M8_JNI_SCOPE_BORROWED_ENV_NO_DETACH=PASS' /tmp/m8-jni-thread-scope-test.txt
+          grep -Fx 'M8_JNI_SCOPE_ATTACH_DETACH_BALANCED=PASS' /tmp/m8-jni-thread-scope-test.txt
+          grep -Fx 'M8_JNI_SCOPE_FAILURE_FAIL_CLOSED=PASS' /tmp/m8-jni-thread-scope-test.txt
+          grep -Fx 'M8_JNI_SCOPE_WORKER_THREAD_LOCAL=PASS' /tmp/m8-jni-thread-scope-test.txt
+          grep -Fx 'M8_LORIE_CALLBACK_JNI_INTEGRATED=false' /tmp/m8-jni-thread-scope-test.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' /tmp/m8-jni-thread-scope-test.txt
+
+      - name: Compile isolated M8 JNI callback scope with Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/27.2.12479018"
+          bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          printf '#include "m8-renderer-jni-thread-env.h"\nvoid m8_probe(JavaVM* vm) { anvildesk_m8::AndroidJniThreadBackend backend(vm); anvildesk_m8::ScopedAndroidCallbackEnv scope(backend); (void)scope.get(); }\n' \
+            | "$bin/clang++" --target=aarch64-linux-android26 \
+                -std=c++17 -Wall -Wextra -Werror -Iscripts \
+                -x c++ -fsyntax-only -
+          echo 'M8_JNI_SCOPE_ARM64_NDK_COMPILE=PASS'
+          echo 'M8_LORIE_CALLBACK_JNI_INTEGRATED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
+      - name: Test M8 isolated renderer session callback context
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -Wall -Wextra -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -Iscripts scripts/test_m8_renderer_session_callback_context.cpp \
+            -o /tmp/m8-renderer-session-context-test
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 20s /tmp/m8-renderer-session-context-test \
+            | tee /tmp/m8-renderer-session-context-test.txt
+          grep -Fx 'M8_RENDERER_CONTEXT_GENERATION_FD_GUARD=PASS' /tmp/m8-renderer-session-context-test.txt
+          grep -Fx 'M8_RENDERER_CONTEXT_ACTIVE_LEASE_DRAIN=PASS' /tmp/m8-renderer-session-context-test.txt
+          grep -Fx 'M8_RENDERER_CONTEXT_REUSED_FD_NEW_GENERATION=PASS' /tmp/m8-renderer-session-context-test.txt
+          grep -Fx 'M8_RENDERER_ANDROID_CALLBACK_QUIESCENCE_VERIFIED=false' /tmp/m8-renderer-session-context-test.txt
+          grep -Fx 'M8_RENDERER_JNI_LIFECYCLE_VERIFIED=false' /tmp/m8-renderer-session-context-test.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' /tmp/m8-renderer-session-context-test.txt
+
+      - name: Verify M8 renderer looper disconnect and lifecycle guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts -p 'test_m8_renderer_looper_disconnect.py' -v
+          python3 -m unittest discover -s scripts -p 'test_m8_renderer_lifecycle.py' -v
+          python3 -m py_compile scripts/patch-m8-renderer-looper-disconnect.py scripts/audit-m8-renderer-lifecycle.py
+          grep -Fq 'M8_NATIVE_LOAD_AUTHORIZED=false' scripts/patch-m8-renderer-looper-disconnect.py
+          grep -Fq 'M8_NATIVE_LOAD_AUTHORIZED=false' scripts/audit-m8-renderer-lifecycle.py
+
       - name: Unit tests
-        run: gradle --no-daemon :core:runtime:testDebugUnitTest
+        run: gradle --no-daemon :core:runtime:testDebugUnitTest :app:testDebugUnitTest
+
+      - name: Audit test-only composite JNI instrumentation isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8CompositeJniDiagnostic.java
+          test -f app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8CompositeJniDiagnosticInstrumentedTest.java
+          test ! -e app/src/main/java/io/github/jdawg867/anvildesk/m8/M8CompositeJniDiagnostic.java
+          test ! -e app/src/main/jniLibs/arm64-v8a/libm8-composite-jni-diagnostic.so
+          grep -Fq 'public static native int runProbe();' \
+            app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8CompositeJniDiagnostic.java
+          grep -Fq 'm8CompositeJniDiagnostic' \
+            app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8CompositeJniDiagnosticInstrumentedTest.java
+          grep -Fq 'System.load(binary.getAbsolutePath());' \
+            app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8CompositeJniDiagnosticInstrumentedTest.java
+          grep -Fq 'Java_io_github_jdawg867_anvildesk_m8_M8CompositeJniDiagnostic_runProbe' \
+            scripts/m8-android-composite-jni-diagnostic.cpp
+          grep -Fq 'Java_io_github_jdawg867_anvildesk_m8_M8CompositeJniDiagnostic_runGlobalRefProbe' \
+            scripts/m8-android-composite-jni-diagnostic.cpp
+          grep -Fq 'public static native int runGlobalRefProbe(Object reference);' \
+            app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8CompositeJniDiagnostic.java
+          grep -Fq 'M8CompositeJniDiagnostic.runGlobalRefProbe(new Object())' \
+            app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8CompositeJniDiagnosticInstrumentedTest.java
+          echo 'M8_COMPOSITE_JNI_INSTRUMENTATION_ISOLATED=PASS'
+          echo 'M8_COMPOSITE_JNI_DIAGNOSTIC_ANDROID_EXECUTED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
+      - name: Compile M8 Android instrumentation tests (no emulator execution)
+        run: gradle --no-daemon :app:assembleDebugAndroidTest
+
+      - name: Audit Samsung JNI diagnostic instrumentation runner without ADB
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          script=scripts/run-m8-composite-jni-samsung-instrumentation.sh
+          bash -n "$script"
+          grep -Fqx 'TARGET="io.github.jdawg867.anvildesk.m8jnidiag"' "$script"
+          grep -Fqx 'RUN_ID="43570274527"' "$script"
+          grep -Fqx 'ORIGINAL="io.github.jdawg867.anvildesk"' "$script"
+          grep -Fq '[[ "$model" == "SM-G766U" && "$abi" == "arm64-v8a" ]]' "$script"
+          grep -Fq 'M8_COMPOSITE_JNI_ORIGINAL_APP_PATH_UNCHANGED=PASS' "$script"
+          grep -Fq 'M8_NATIVE_LOAD_AUTHORIZED=false' "$script"
+          bash "$script" --verify-artifact \
+            | tee /tmp/m8-composite-jni-samsung-preflight.txt
+          grep -Fx 'M8_COMPOSITE_JNI_SAMSUNG_RUNNER_PREFLIGHT=PASS' /tmp/m8-composite-jni-samsung-preflight.txt
+          grep -Fx 'M8_COMPOSITE_JNI_DEVICE_EXECUTED=false' /tmp/m8-composite-jni-samsung-preflight.txt
+
+      - name: Verify pinned standalone composite JNI APK artifact without device
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash -n scripts/verify-m8-composite-jni-test-apks.sh
+          grep -Fqx 'RUN_ID="43570274527"' scripts/verify-m8-composite-jni-test-apks.sh
+          grep -Fqx 'EXPECTED_SHA="e671a0711742980b5c6df283220660aa93b59d57"' scripts/verify-m8-composite-jni-test-apks.sh
+          grep -Fqx 'ARTIFACT_ID="14104411442"' scripts/verify-m8-composite-jni-test-apks.sh
+          grep -Fqx 'ARTIFACT_DIGEST="sha256:4ff87bd54ef619d4a9643b2deda5fc7f44e629c5adba96f21fd84f800b6c50c8"' scripts/verify-m8-composite-jni-test-apks.sh
+          expired="$(gh api repos/jdawg867/anvildesk/actions/artifacts/14104411442 --jq '.expired')"
+          if [[ "$expired" == "true" ]]; then
+            echo 'M8_COMPOSITE_JNI_PINNED_PREFLIGHT_SKIPPED_EXPIRED=true'
+            echo 'M8_COMPOSITE_JNI_DEVICE_EXECUTED=false'
+            exit 0
+          fi
+          [[ "$expired" == "false" ]] || exit 1
+          bash scripts/verify-m8-composite-jni-test-apks.sh --verify-artifact \
+            | tee /tmp/m8-composite-jni-apk-artifact-check.txt
+          grep -Fx 'M8_COMPOSITE_JNI_APK_ARTIFACT_PREFLIGHT=PASS' /tmp/m8-composite-jni-apk-artifact-check.txt
+          grep -Fx 'M8_COMPOSITE_JNI_TEST_ONLY_PACKAGE_ISOLATION=PASS' /tmp/m8-composite-jni-apk-artifact-check.txt
+          grep -Fx 'M8_COMPOSITE_JNI_DEVICE_EXECUTED=false' /tmp/m8-composite-jni-apk-artifact-check.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' /tmp/m8-composite-jni-apk-artifact-check.txt
+
+      - name: Build separate test-only M8 composite JNI diagnostic APK pair (not installed)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          ANVILDESK_M8_COMPOSITE_JNI_APK_BUILD: "true"
+        run: |
+          set -euo pipefail
+          bash -n scripts/build-m8-composite-jni-test-apks.sh
+          bash scripts/build-m8-composite-jni-test-apks.sh \
+            | tee /tmp/m8-composite-jni-apk-build.txt
+          grep -Fx 'M8_COMPOSITE_JNI_TEST_ONLY_PACKAGE_ISOLATION=PASS' /tmp/m8-composite-jni-apk-build.txt
+          grep -Fx 'M8_COMPOSITE_JNI_ANDROID_EXECUTED=false' /tmp/m8-composite-jni-apk-build.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' /tmp/m8-composite-jni-apk-build.txt
+
+      - name: Retain separate test-only M8 composite JNI diagnostic APK pair
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-composite-jni-diagnostic-test-apks-arm64
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Build stable development debug APK
         if: github.event_name == 'push' && steps.dev_signing.outputs.available == 'true'

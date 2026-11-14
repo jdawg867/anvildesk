@@ -752,6 +752,25 @@ jobs:
       - name: Compile M8 Android instrumentation tests (no emulator execution)
         run: gradle --no-daemon :app:assembleDebugAndroidTest
 
+      - name: Audit Samsung JNI diagnostic instrumentation runner without ADB
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          script=scripts/run-m8-composite-jni-samsung-instrumentation.sh
+          bash -n "$script"
+          grep -Fqx 'TARGET="io.github.jdawg867.anvildesk.m8jnidiag"' "$script"
+          grep -Fqx 'ORIGINAL="io.github.jdawg867.anvildesk"' "$script"
+          grep -Fq '[[ "$model" == "SM-G766U" && "$abi" == "arm64-v8a" ]]' "$script"
+          grep -Fq 'M8_COMPOSITE_JNI_ORIGINAL_APP_PATH_UNCHANGED=PASS' "$script"
+          grep -Fq 'M8_NATIVE_LOAD_AUTHORIZED=false' "$script"
+          bash "$script" --verify-artifact \
+            | tee /tmp/m8-composite-jni-samsung-preflight.txt
+          grep -Fx 'M8_COMPOSITE_JNI_SAMSUNG_RUNNER_PREFLIGHT=PASS' /tmp/m8-composite-jni-samsung-preflight.txt
+          grep -Fx 'M8_COMPOSITE_JNI_DEVICE_EXECUTED=false' /tmp/m8-composite-jni-samsung-preflight.txt
+
       - name: Verify pinned standalone composite JNI APK artifact without device
         if: github.event_name == 'pull_request'
         shell: bash

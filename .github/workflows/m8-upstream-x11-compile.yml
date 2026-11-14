@@ -179,7 +179,6 @@ jobs:
           python3 anvildesk-guard/scripts/audit-m8-renderer-lifecycle.py \
             upstream/lorie/src/main/cpp/lorie/activity.cpp \
             | tee m8-renderer-lifecycle-audit.txt
-          m8-lorie-callback-jni-inventory.txt
           grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-renderer-lifecycle-audit.txt
       - name: Inventory pinned Lorie callback JNI references and renderer accesses
         shell: bash

@@ -1451,6 +1451,75 @@ static void testCompositeSessionRetirementFailedRemoveAndRecovery() {
                 "recovered teardown retained stale platform userdata");
     }
 }
+// A late event after failed deregistration must reach only the still-owned
+// trampoline, never the client callback; no JNI/renderer retirement until a
+// later retry has joined the platform callback worker.
+static void testRetirementLateCallbackAfterFailedRemove() {
+    require(platform.references == 0,
+            "prior retirement leaked fake looper reference");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "prior retirement left registered callback userdata");
+        platform.callbackAutoRemoved = std::promise<void>{};
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    auto lateCallbackAutoRemoved = platform.callbackAutoRemoved.get_future();
+    std::atomic<int> clientCalls{0};
+    std::atomic<int> active{0};
+    CompositeRefBackend backend;
+    JoinedCompositeResource resources{&active, &backend};
+    int token = 7;
+    anvildesk_m8::DeferredGlobalRefRetirement<CompositeRefBackend> refs(
+        backend, &token);
+    anvildesk_m8::RendererSessionOwnedLooper owner;
+    require(owner.registerCallback(1800, 1800, ALOOPER_EVENT_INPUT,
+                                   autoRemovingCallback, &clientCalls),
+            "late callback retirement registration failed");
+    anvildesk_m8::RendererSessionRetirement<
+        anvildesk_m8::RendererSessionOwnedLooper,
+        decltype(refs), JoinedCompositeResource> retirement(owner, refs, resources);
+    platform.failRemove.store(true);
+    require(!retirement.shutdownAndRetire(),
+            "failed removal unexpectedly retired late-callback resources");
+    require(!retirement.workerJoined() && !retirement.retired() &&
+            owner.holdsCallbackContext() && refs.holdsReference() &&
+            backend.deleted == 0 && resources.calls == 0 &&
+            clientCalls == 0, "removal failure released late callback context");
+
+    // Dispatch after admission is closed but before platform removal.
+    // The trampoline must return zero without ever calling clientData.
+    triggerEvent();
+    require(lateCallbackAutoRemoved.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "late callback was not rejected and auto-deregistered");
+    require(clientCalls == 0 && owner.holdsCallbackContext() &&
+            !retirement.workerJoined() && refs.holdsReference() &&
+            backend.deleted == 0 && resources.calls == 0,
+            "late callback entered client or caused premature retirement");
+
+    platform.failRemove.store(false);
+    require(retirement.shutdownAndRetire(),
+            "failed to retry after late callback auto-removal");
+    require(retirement.workerJoined() && retirement.retired() &&
+            !owner.holdsCallbackContext() && !refs.holdsReference() &&
+            backend.deleted == 1 && resources.calls == 1 &&
+            clientCalls == 0 && platform.references == 0,
+            "retry failed to join and retire late callback resources");
+    require(retirement.shutdownAndRetire() && backend.deleted == 1 &&
+            resources.calls == 1 && clientCalls == 0,
+            "repeated late-callback shutdown changed terminal state");
+    // A pending fake event must never call a reclaimed callback after join.
+    triggerEvent();
+    require(clientCalls == 0, "post-join event reached client callback");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "late callback retry left unsafe raw platform userdata");
+    }
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -1471,6 +1540,7 @@ int main() {
     testCompositeRefReleaseAfterWorkerJoin();
     testCompositeSessionRetirementAfterRealWorkerJoin();
     testCompositeSessionRetirementFailedRemoveAndRecovery();
+    testRetirementLateCallbackAfterFailedRemove();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -1512,6 +1582,8 @@ int main() {
               << "M8_RENDERER_COMPOSITE_SESSION_RETIREMENT_EXACTLY_ONCE=PASS\n"
               << "M8_RENDERER_SESSION_RETIREMENT_FAILED_REMOVE_RETAINS_RESOURCES=PASS\n"
               << "M8_RENDERER_SESSION_RETIREMENT_REMOVE_RETRY_POST_JOIN=PASS\n"
+              << "M8_SESSION_RETIREMENT_LATE_CALLBACK_ADMISSION_REJECTED=PASS\n"
+              << "M8_SESSION_RETIREMENT_LATE_CALLBACK_POST_JOIN_RETIREMENT=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

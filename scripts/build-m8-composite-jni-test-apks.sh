@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'code=$?; echo "STOP: composite JNI APK packaging failed at line $LINENO (exit $code): $BASH_COMMAND" >&2' ERR
 # Opt-in CI-only composite JNI test APK pair: NEVER install, deploy, or publish.
 [[ "${ANVILDESK_M8_COMPOSITE_JNI_APK_BUILD:-}" == "true" ]] || {
   echo "STOP: explicit isolated diagnostic APK opt-in required" >&2
@@ -22,7 +23,10 @@ mkdir -p "$OUT"
 "$BIN/llvm-readelf" -h "$OUT/libm8-composite-jni-diagnostic.so" \
   | grep -Eq 'Machine:.*AArch64'
 "$BIN/llvm-readelf" -Ws "$OUT/libm8-composite-jni-diagnostic.so" \
-  | grep -Fq 'Java_io_github_jdawg867_anvildesk_m8_M8CompositeJniDiagnostic_runProbe'
+  > /tmp/m8-composite-jni-exported-symbols.txt
+grep -Fq 'Java_io_github_jdawg867_anvildesk_m8_M8CompositeJniDiagnostic_runProbe' \
+  /tmp/m8-composite-jni-exported-symbols.txt
+echo "M8_COMPOSITE_JNI_NATIVE_PREBUILD=PASS"
 gradle --no-daemon \
   -PanvildeskM8CompositeJniDiagnostic=true \
   :app:assembleDebug :app:assembleDebugAndroidTest

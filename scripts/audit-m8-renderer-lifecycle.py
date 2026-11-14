@@ -64,6 +64,32 @@ def audit(source: str) -> list[str]:
         raise ValueError("Pinned thread-local callback registration drift")
     if "this);" not in source:
         raise ValueError("Pinned callback raw userdata registration drift")
+    # Scope registration evidence to connect(), not a coincidentally matching
+    # addFd call elsewhere in the translation unit. The audit intentionally
+    # FAILS if the pinned method layout changes: manual source review is then
+    # required before any native renderer integration.
+    connect_start = "void LorieViewResources::connect(jint fd) {"
+    if source.count(connect_start) != 1:
+        raise ValueError("Pinned renderer connect boundary drift")
+    connect_section = source.split(connect_start, 1)[1]
+    registration = connect_section.find("ALooper_addFd(ALooper_forThread(), fd,")
+    if registration < 0 or registration > 1200:
+        raise ValueError("Pinned renderer connect registration drift")
+    userdata = connect_section.find("callback, this);", registration)
+    if userdata < 0 or userdata - registration > 350:
+        raise ValueError("Pinned renderer connect raw userdata drift")
+    # A raw LorieViewResources* dispatched by the registered platform
+    # callback cannot be kept alive by the later nativeDestroy destructor.
+    # This remains a blocker even when the JNI worker diagnostic passed.
+    if source.count("return ((LorieViewResources*) data)->xcallback(fd, events);") != 1:
+        raise ValueError("Pinned callback raw userdata entry drift")
+    # Ensure nativeDestroy's destructor and raw free are BOTH inside its
+    # registered JNI method body, not merely present elsewhere in source.
+    destroy_begin = source.index(METHOD_DESTROY)
+    destroy_end = source.index('{"surfaceChanged"', destroy_begin)
+    destroy_body = source[destroy_begin:destroy_end]
+    if destroy_body.count("r->~LorieViewResources();") != 1 or destroy_body.count("free(r);") != 1:
+        raise ValueError("Pinned nativeDestroy lifetime boundary drift")
     # Both operations may use ALooper_forThread() while executing on
     # DIFFERENT threads. Matching the expression does not establish matching
     # ALooper identity. Treat this as a positive detection of a blocker.
@@ -109,6 +135,8 @@ def audit(source: str) -> list[str]:
         "M8_RENDERER_GLOBAL_JNI_REFERENCE_LIFETIME_VERIFIED=false",
         "M8_RENDERER_LOOPER_FD_OWNERSHIP_VERIFIED=false",
         "M8_RENDERER_RAW_LOOPER_USERDATA=observed",
+        "M8_RENDERER_CONNECT_RAW_USERDATA_SCOPED=observed",
+        "M8_RENDERER_NATIVE_DESTROY_RAW_FREE_SCOPED=observed",
         "M8_RENDERER_CALLBACK_ENTRY_QUIESCENCE_VERIFIED=false",
         "M8_RENDERER_REGISTERED_LOOPER_TEARDOWN_VERIFIED=false",
         "M8_RENDERER_RUNTIME_VERIFIED=false",

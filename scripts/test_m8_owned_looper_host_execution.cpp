@@ -111,6 +111,7 @@ int ALooper_pollOnce(int, int*, int*, void**) {
 #include "m8-renderer-session-owned-looper.h"
 #include "m8-renderer-callback-jni-scope.h"
 #include "m8-renderer-jni-global-ref-retirement.h"
+#include "m8-renderer-session-retirement.h"
 static void require(bool ok, const char* why) {
     if (!ok) throw std::runtime_error(why);
 }
@@ -1305,6 +1306,69 @@ static void testCompositeRefReleaseAfterWorkerJoin() {
             owner.shutdownAndJoin() && platform.references == 0,
             "repeated retirement deleted twice or leaked looper");
 }
+// Exercise the actual isolated RendererSessionOwnedLooper shutdown/join as
+// the ONLY authority for deferred JNI and renderer-resource retirement.
+struct JoinedCompositeResource {
+    std::atomic<int>* active;
+    CompositeRefBackend* backend;
+    std::atomic<int> calls{0};
+    bool retire() {
+        ++calls;
+        return active->load() == 0 && backend->deleted.load() == 1;
+    }
+};
+static void testCompositeSessionRetirementAfterRealWorkerJoin() {
+    require(platform.references == 0, "prior composite retained platform looper");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered, "prior callback remained registered");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    int token = 0;
+    CompositeRefBackend backend;
+    backend.pendingException = false;
+    std::atomic<int> active{0};
+    JoinedCompositeResource resources{&active, &backend};
+    anvildesk_m8::DeferredGlobalRefRetirement<CompositeRefBackend> refs(
+        backend, &token);
+    std::promise<void> entered, release;
+    auto enteredFuture = entered.get_future();
+    auto releaseFuture = release.get_future().share();
+    auto removedFuture = platform.removalSucceeded.get_future();
+    CompositeRefCallbackData data{&entered, &releaseFuture, &active};
+    anvildesk_m8::RendererSessionOwnedLooper owner;
+    require(owner.registerCallback(1600, 1600, ALOOPER_EVENT_INPUT,
+                                   heldRefCallback, &data),
+            "could not register retirement composite callback");
+    anvildesk_m8::RendererSessionRetirement<
+        anvildesk_m8::RendererSessionOwnedLooper,
+        decltype(refs), JoinedCompositeResource> retirement(owner, refs, resources);
+    triggerEvent();
+    require(enteredFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "retirement callback never entered owned worker");
+    std::atomic<bool> retired{false};
+    std::thread shutdown([&] { retired = retirement.shutdownAndRetire(); });
+    require(removedFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "retirement callback was not removed during shutdown");
+    require(active == 1 && !retired && !retirement.workerJoined() &&
+            refs.holdsReference() && backend.deleted == 0 &&
+            resources.calls == 0,
+            "retirement released resources while callback was still active");
+    release.set_value();
+    shutdown.join();
+    require(retired && retirement.retired() && retirement.workerJoined() &&
+            active == 0 && refs.retired() && backend.deleted == 1 &&
+            resources.calls == 1 && !owner.holdsCallbackContext() &&
+            platform.references == 0,
+            "retirement did not release resources exactly after actual join");
+    require(retirement.shutdownAndRetire() && backend.deleted == 1 &&
+            resources.calls == 1 && owner.shutdownAndJoin(),
+            "composite post-join retirement was not idempotent");
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -1323,6 +1387,7 @@ int main() {
     testRendererSessionCompositeAddFailureAndIdleClose();
     testCompositeJniScopeOnOwnedCallbackWorker();
     testCompositeRefReleaseAfterWorkerJoin();
+    testCompositeSessionRetirementAfterRealWorkerJoin();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -1360,6 +1425,8 @@ int main() {
               << "M8_RENDERER_COMPOSITE_JNI_ATTACH_FAILURE_FAIL_CLOSED=PASS\n"
               << "M8_RENDERER_COMPOSITE_JNI_GLOBAL_REF_POST_JOIN=PASS\n"
               << "M8_RENDERER_COMPOSITE_JNI_GLOBAL_REF_EXCEPTION_RETRY=PASS\n"
+              << "M8_RENDERER_COMPOSITE_SESSION_RETIREMENT_POST_JOIN=PASS\n"
+              << "M8_RENDERER_COMPOSITE_SESSION_RETIREMENT_EXACTLY_ONCE=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

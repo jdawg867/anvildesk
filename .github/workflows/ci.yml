@@ -780,6 +780,12 @@ jobs:
             app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8CompositeJniDiagnosticInstrumentedTest.java
           grep -Fq 'Java_io_github_jdawg867_anvildesk_m8_M8CompositeJniDiagnostic_runProbe' \
             scripts/m8-android-composite-jni-diagnostic.cpp
+          grep -Fq 'Java_io_github_jdawg867_anvildesk_m8_M8CompositeJniDiagnostic_runGlobalRefProbe' \
+            scripts/m8-android-composite-jni-diagnostic.cpp
+          grep -Fq 'public static native int runGlobalRefProbe(Object reference);' \
+            app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8CompositeJniDiagnostic.java
+          grep -Fq 'M8CompositeJniDiagnostic.runGlobalRefProbe(new Object())' \
+            app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8CompositeJniDiagnosticInstrumentedTest.java
           echo 'M8_COMPOSITE_JNI_INSTRUMENTATION_ISOLATED=PASS'
           echo 'M8_COMPOSITE_JNI_DIAGNOSTIC_ANDROID_EXECUTED=false'
           echo 'M8_NATIVE_LOAD_AUTHORIZED=false'

@@ -42,6 +42,29 @@ See `scripts/audit-m8-renderer-lifecycle.py`,
 `scripts/patch-m8-renderer-looper-disconnect.py` and their unit tests.
 Source-observation markers are **not** runtime safety attestations.
 
+## Source-locked Lorie lifecycle review checkpoint (2026-11-14)
+
+The pinned `activity.cpp` audit now scopes observations to
+`LorieViewResources::connect(jint fd)` and to the registered
+`nativeDestroy(J)V` method instead of accepting matching source tokens
+elsewhere in the translation unit. Its unit tests reject a displaced
+registration, unexpected callback userdata, duplicated raw callback entry,
+and raw-free drift.
+
+| Pinned method | Observed dependency | Required replacement before promotion |
+|---|---|---|
+| `connect(jint fd)` | Registers `this` using `ALooper_forThread()` | A session-owned looper and callback context with a retained lease; no raw destructible renderer userdata |
+| Static native callback | Casts userdata directly to `LorieViewResources*` and calls `xcallback` | Generation-checked callback gate with entry quiescence proven by stop/join |
+| `xcallback(fd, events)` | Uses retained `JNIEnv*` to invoke Java while touching renderer state | Acquire per-worker JNI env via `JavaVM`, preserve exceptions and Java reference lifetime |
+| `~LorieViewResources()` | Removes FD via its caller thread's `ALooper_forThread()`, then destroys renderer and JNI globals | Remove the exact registered FD on the owned looper, drain/stop/join, then retire references/resources |
+| `nativeDestroy(J)V` | Destructs raw object and calls `free(r)` | Idempotent handle invalidation and shutdown completion guarantee before free; account for Surface concurrency |
+
+These are **blocker observations**, not assurances that a source patch would
+be correct. A syntactic audit cannot prove the absence of callbacks already
+queued in Android. The isolated Samsung JNI reference test does not supply
+the missing Lorie-specific lifetime guarantee. Continue keeping
+`M8_NATIVE_LOAD_AUTHORIZED=false` and PR #21 unmerged.
+
 ## Mandatory ownership/order contract for a future adapter
 
 1. **Construct owner before registration.** The renderer session must own a

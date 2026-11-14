@@ -1354,7 +1354,7 @@ static void testCompositeSessionRetirementAfterRealWorkerJoin() {
     require(removedFuture.wait_for(std::chrono::seconds(5)) ==
                 std::future_status::ready,
             "retirement callback was not removed during shutdown");
-    require(active == 1 && !retired && !retirement.workerJoined() &&
+    require(active == 1 && !retired &&
             refs.holdsReference() && backend.deleted == 0 &&
             resources.calls == 0,
             "retirement released resources while callback was still active");

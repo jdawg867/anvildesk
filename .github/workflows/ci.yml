@@ -729,6 +729,26 @@ jobs:
       - name: Unit tests
         run: gradle --no-daemon :core:runtime:testDebugUnitTest :app:testDebugUnitTest
 
+      - name: Audit test-only composite JNI instrumentation isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8CompositeJniDiagnostic.java
+          test -f app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8CompositeJniDiagnosticInstrumentedTest.java
+          test ! -e app/src/main/java/io/github/jdawg867/anvildesk/m8/M8CompositeJniDiagnostic.java
+          test ! -e app/src/main/jniLibs/arm64-v8a/libm8-composite-jni-diagnostic.so
+          grep -Fq 'public static native int runProbe();' \
+            app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8CompositeJniDiagnostic.java
+          grep -Fq 'm8CompositeJniDiagnostic' \
+            app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8CompositeJniDiagnosticInstrumentedTest.java
+          grep -Fq 'System.load(binary.getAbsolutePath());' \
+            app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8CompositeJniDiagnosticInstrumentedTest.java
+          grep -Fq 'Java_io_github_jdawg867_anvildesk_m8_M8CompositeJniDiagnostic_runProbe' \
+            scripts/m8-android-composite-jni-diagnostic.cpp
+          echo 'M8_COMPOSITE_JNI_INSTRUMENTATION_ISOLATED=PASS'
+          echo 'M8_COMPOSITE_JNI_DIAGNOSTIC_ANDROID_EXECUTED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+
       - name: Compile M8 Android instrumentation tests (no emulator execution)
         run: gradle --no-daemon :app:assembleDebugAndroidTest
 

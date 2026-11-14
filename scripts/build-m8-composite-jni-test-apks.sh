@@ -26,6 +26,8 @@ mkdir -p "$OUT"
   > /tmp/m8-composite-jni-exported-symbols.txt
 grep -Fq 'Java_io_github_jdawg867_anvildesk_m8_M8CompositeJniDiagnostic_runProbe' \
   /tmp/m8-composite-jni-exported-symbols.txt
+grep -Fq 'Java_io_github_jdawg867_anvildesk_m8_M8CompositeJniDiagnostic_runGlobalRefProbe' \
+  /tmp/m8-composite-jni-exported-symbols.txt
 echo "M8_COMPOSITE_JNI_NATIVE_PREBUILD=PASS"
 gradle --no-daemon \
   -PanvildeskM8CompositeJniDiagnostic=true \

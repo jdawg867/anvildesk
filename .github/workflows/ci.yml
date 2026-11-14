@@ -752,6 +752,31 @@ jobs:
       - name: Compile M8 Android instrumentation tests (no emulator execution)
         run: gradle --no-daemon :app:assembleDebugAndroidTest
 
+      - name: Build separate test-only M8 composite JNI diagnostic APK pair (not installed)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          ANVILDESK_M8_COMPOSITE_JNI_APK_BUILD: "true"
+        run: |
+          set -euo pipefail
+          bash -n scripts/build-m8-composite-jni-test-apks.sh
+          bash scripts/build-m8-composite-jni-test-apks.sh \
+            | tee /tmp/m8-composite-jni-apk-build.txt
+          grep -Fx 'M8_COMPOSITE_JNI_TEST_ONLY_PACKAGE_ISOLATION=PASS' /tmp/m8-composite-jni-apk-build.txt
+          grep -Fx 'M8_COMPOSITE_JNI_ANDROID_EXECUTED=false' /tmp/m8-composite-jni-apk-build.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' /tmp/m8-composite-jni-apk-build.txt
+
+      - name: Retain separate test-only M8 composite JNI diagnostic APK pair
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-composite-jni-diagnostic-test-apks-arm64
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Build stable development debug APK
         if: github.event_name == 'push' && steps.dev_signing.outputs.available == 'true'
         env:

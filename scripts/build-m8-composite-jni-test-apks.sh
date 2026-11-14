@@ -43,7 +43,7 @@ test -x "$AAPT"
 "$AAPT" dump badging "$TEST" \
   | grep -F "package: name='io.github.jdawg867.anvildesk.m8jnidiag.test'"
 "$AAPT" dump badging "$TEST" \
-  | grep -F "instrumentation: name='androidx.test.runner.AndroidJUnitRunner' targetPackage='io.github.jdawg867.anvildesk.m8jnidiag'"
+  | grep -E "instrumentation: name='androidx.test.runner.AndroidJUnitRunner'.*targetPackage='io.github.jdawg867.anvildesk.m8jnidiag'"
 echo 'M8_COMPOSITE_JNI_TEST_ONLY_PACKAGE_ISOLATION=PASS'
 echo 'M8_COMPOSITE_JNI_ANDROID_EXECUTED=false'
 echo 'M8_NATIVE_LOAD_AUTHORIZED=false'

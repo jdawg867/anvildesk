@@ -91,9 +91,17 @@ def audit(source: str) -> list[str]:
     registration = connect_body.find("ALooper_addFd(ALooper_forThread(), fd,")
     if registration < 0:
         raise ValueError("Pinned renderer connect registration drift")
-    userdata = connect_body.find("callback, this);", registration)
-    if userdata < 0 or userdata - registration > 350:
+    # The pinned upstream registers an INLINE lambda and passes raw this
+    # as its final userdata: ... +[](int fd,...){ return
+    # ((LorieViewResources*) data)->xcallback(fd, events); }, this);
+    # A named "callback, this" pattern is NOT present in the real source.
+    raw_entry = "return ((LorieViewResources*) data)->xcallback(fd, events);"
+    entry = connect_body.find(raw_entry, registration)
+    userdata = connect_body.find("}, this);", registration)
+    if (entry < 0 or userdata < 0 or not (registration < entry < userdata):
         raise ValueError("Pinned renderer connect raw userdata drift")
+    if userdata - registration > 800:
+        raise ValueError("Pinned renderer connect callback layout drift")
     # A raw LorieViewResources* dispatched by the registered platform
     # callback cannot be kept alive by the later nativeDestroy destructor.
     # This remains a blocker even when the JNI worker diagnostic passed.

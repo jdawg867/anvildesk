@@ -9,4 +9,5 @@ package io.github.jdawg867.anvildesk.m8;
 public final class M8CompositeJniDiagnostic {
     private M8CompositeJniDiagnostic() {}
     public static native int runProbe();
+    public static native int runGlobalRefProbe(Object reference);
 }

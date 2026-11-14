@@ -120,6 +120,16 @@ and the owned worker joins. Repeated retirement is checked for exactly-once
 cleanup. These are fake-NDK host execution guarantees, not yet physical
 Android or Lorie integration evidence.
 
+**Late callback during failed removal:** the retirement composite now
+exercises a pending looper event *after* a failed `removeFd` and after
+callback admission has closed. The still-owned trampoline must reject that
+event without invoking client userdata; references and renderer resources
+must remain held until a later retry accepts the already-removed descriptor,
+stops the worker, joins it and retires resources exactly once. The test
+checks that a post-join fake event cannot re-enter the retired client.
+This is still fake-NDK host evidence, not proof that an unmodified Lorie
+callback's raw `this` userdata is safe on Android.
+
 **Limit:** this is a host protocol model with a synthetic worker join and
 renderer cleanup. It is not wired to `RendererSessionOwnedLooper`, to
 `LorieViewResources`, to a real Java Surface, or to Xorg. In particular,

@@ -46,8 +46,15 @@ test -x "$AAPT"
   | grep -F "package: name='io.github.jdawg867.anvildesk.m8jnidiag'"
 "$AAPT" dump badging "$TEST" \
   | grep -F "package: name='io.github.jdawg867.anvildesk.m8jnidiag.test'"
-"$AAPT" dump badging "$TEST" \
-  | grep -E "instrumentation: name='androidx.test.runner.AndroidJUnitRunner'.*targetPackage='io.github.jdawg867.anvildesk.m8jnidiag'"
+# aapt dump badging omits instrumentation metadata on some build-tools.
+# Read the compiled test APK manifest directly; require both attributes.
+"$AAPT" dump xmltree "$TEST" AndroidManifest.xml \
+  > /tmp/m8-composite-jni-test-manifest.txt
+grep -F 'E: instrumentation' /tmp/m8-composite-jni-test-manifest.txt
+grep -F 'android:name(0x01010003)="androidx.test.runner.AndroidJUnitRunner"' \
+  /tmp/m8-composite-jni-test-manifest.txt
+grep -F 'android:targetPackage(0x01010021)="io.github.jdawg867.anvildesk.m8jnidiag"' \
+  /tmp/m8-composite-jni-test-manifest.txt
 echo 'M8_COMPOSITE_JNI_TEST_ONLY_PACKAGE_ISOLATION=PASS'
 echo 'M8_COMPOSITE_JNI_ANDROID_EXECUTED=false'
 echo 'M8_NATIVE_LOAD_AUTHORIZED=false'

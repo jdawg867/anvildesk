@@ -76,6 +76,49 @@ class RendererLifecycleAuditTests(unittest.TestCase):
         self.assertIn("M8_RENDERER_CALLBACK_ENTRY_QUIESCENCE_VERIFIED=false", report)
         self.assertIn("M8_RENDERER_REGISTERED_LOOPER_TEARDOWN_VERIFIED=false", report)
 
+    def test_connect_and_destroy_scoped_observations(self):
+        report = mod.audit(SOURCE)
+        self.assertIn("M8_RENDERER_CONNECT_RAW_USERDATA_SCOPED=observed", report)
+        self.assertIn("M8_RENDERER_NATIVE_DESTROY_RAW_FREE_SCOPED=observed", report)
+        self.assertIn("M8_RENDERER_GLOBAL_JNI_REFERENCE_LIFETIME_VERIFIED=false", report)
+
+    def test_global_registration_token_does_not_mask_drift_in_connect(self):
+        moved = SOURCE.replace(
+            "    ALooper_addFd(ALooper_forThread(), fd, 0, ALOOPER_EVENT_INPUT,\\n"
+            "              callback, this);",
+            "    ALooper_addFd(explicitLooper, fd, 0, ALOOPER_EVENT_INPUT,\\n"
+            "              callback, this);",
+            1,
+        )
+        self.assertNotEqual(moved, SOURCE)
+        with self.assertRaisesRegex(ValueError, "connect registration"):
+            mod.audit(moved)
+
+    def test_callback_userdata_nearby_unrelated_token_does_not_mask_drift(self):
+        moved = SOURCE.replace(
+            "              callback, this);\\n}",
+            "              callback, otherUserdata);\\n}",
+            1,
+        )
+        self.assertNotEqual(moved, SOURCE)
+        with self.assertRaisesRegex(ValueError, "connect raw userdata"):
+            mod.audit(moved)
+
+    def test_native_destroy_raw_free_outside_registered_body_rejected(self):
+        moved = SOURCE.replace(
+            "    free(r);\\n}},",
+            "    /* deferred deletion without proved join */\\n}},",
+            1,
+        )
+        self.assertNotEqual(moved, SOURCE)
+        with self.assertRaises(ValueError):
+            mod.audit(moved)
+
+    def test_duplicate_raw_callback_entry_rejected(self):
+        duplicate = SOURCE + "\\nreturn ((LorieViewResources*) data)->xcallback(fd, events);"
+        with self.assertRaisesRegex(ValueError, "callback raw userdata entry"):
+            mod.audit(duplicate)
+
     def test_missing_raw_looper_userdata_rejected(self):
         with self.assertRaises(ValueError):
             mod.audit(SOURCE.replace(

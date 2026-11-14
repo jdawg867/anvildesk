@@ -112,6 +112,7 @@ int ALooper_pollOnce(int, int*, int*, void**) {
 #include "m8-renderer-callback-jni-scope.h"
 #include "m8-renderer-jni-global-ref-retirement.h"
 #include "m8-renderer-session-retirement.h"
+#include "m8-renderer-session-callback-context.h"
 static void require(bool ok, const char* why) {
     if (!ok) throw std::runtime_error(why);
 }
@@ -1520,6 +1521,112 @@ static void testRetirementLateCallbackAfterFailedRemove() {
                 "late callback retry left unsafe raw platform userdata");
     }
 }
+// A recycled FD is not a recycled renderer generation. Exercise actual
+// isolated worker dispatch with the old generation delivered against the
+// replacement session's live callback gate. Never invoke freed old userdata.
+struct ReplacementDispatch {
+    anvildesk_m8::RendererSessionCallbackContext* gate;
+    std::atomic<std::uint64_t> deliveredGeneration{0};
+    std::atomic<int> accepted{0};
+    std::mutex mutex;
+    std::condition_variable dispatched;
+    int deliveries = 0;
+};
+static int replacementGenerationCallback(int fd, int, void* raw) {
+    auto* data = static_cast<ReplacementDispatch*>(raw);
+    auto lease = data->gate->enter(data->deliveredGeneration.load(), fd);
+    if (lease) ++data->accepted;
+    {
+        std::lock_guard<std::mutex> lock(data->mutex);
+        ++data->deliveries;
+    }
+    data->dispatched.notify_one();
+    return 1;
+}
+static void awaitReplacementDelivery(ReplacementDispatch& data, int count) {
+    std::unique_lock<std::mutex> lock(data.mutex);
+    require(data.dispatched.wait_for(lock, std::chrono::seconds(5),
+                                    [&] { return data.deliveries >= count; }),
+            "replacement callback dispatch not observed");
+}
+static void testReplacementGenerationAndRecycledFdOwnership() {
+    require(platform.references == 0,
+            "previous replacement test leaked looper reference");
+    constexpr int fd = 1900;
+    constexpr std::uint64_t oldGeneration = 1900;
+    constexpr std::uint64_t newGeneration = 1901;
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "previous test left registered callback userdata");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    anvildesk_m8::RendererSessionCallbackContext oldGate(oldGeneration, fd);
+    ReplacementDispatch oldDispatch{&oldGate};
+    oldDispatch.deliveredGeneration = oldGeneration;
+    {
+        anvildesk_m8::RendererSessionOwnedLooper oldOwner;
+        require(oldOwner.registerCallback(oldGeneration, fd, ALOOPER_EVENT_INPUT,
+                                          replacementGenerationCallback,
+                                          &oldDispatch),
+                "failed to register old generation");
+        triggerEvent();
+        awaitReplacementDelivery(oldDispatch, 1);
+        require(oldDispatch.accepted == 1, "old valid callback was rejected");
+        oldGate.closeAdmission();
+        require(oldOwner.shutdownAndJoin(), "old callback worker join failed");
+        oldGate.waitForLeases();
+        require(!oldOwner.holdsCallbackContext() && platform.references == 0,
+                "old callback raw userdata survived verified join");
+    }
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "old generation left platform callback registered");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    anvildesk_m8::RendererSessionCallbackContext newGate(newGeneration, fd);
+    ReplacementDispatch newDispatch{&newGate};
+    // The platform FD is recycled, but the old generation must NOT mutate
+    // the new renderer's state even while the new callback worker is live.
+    newDispatch.deliveredGeneration = oldGeneration;
+    anvildesk_m8::RendererSessionOwnedLooper newOwner;
+    require(newOwner.registerCallback(newGeneration, fd, ALOOPER_EVENT_INPUT,
+                                      replacementGenerationCallback,
+                                      &newDispatch),
+            "failed to register replacement generation on reused FD");
+    triggerEvent();
+    awaitReplacementDelivery(newDispatch, 1);
+    require(newDispatch.accepted == 0 &&
+            !newGate.enter(oldGeneration, fd) && !oldGate.enter(oldGeneration, fd),
+            "stale generation was admitted to replacement renderer");
+    newDispatch.deliveredGeneration = newGeneration;
+    triggerEvent();
+    awaitReplacementDelivery(newDispatch, 2);
+    require(newDispatch.accepted == 1,
+            "replacement generation did not admit its valid callback");
+    newGate.closeAdmission();
+    require(newOwner.shutdownAndJoin(),
+            "replacement callback worker did not join");
+    newGate.waitForLeases();
+    require(!newOwner.holdsCallbackContext() && platform.references == 0 &&
+            oldDispatch.accepted == 1 && newDispatch.accepted == 1,
+            "replacement join changed old generation or leaked callback state");
+    require(!newOwner.registerCallback(newGeneration + 1, fd,
+                                       ALOOPER_EVENT_INPUT,
+                                       replacementGenerationCallback,
+                                       &newDispatch),
+            "replacement owner reopened after terminal join");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "replaced callback left raw platform userdata registered");
+    }
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -1541,6 +1648,7 @@ int main() {
     testCompositeSessionRetirementAfterRealWorkerJoin();
     testCompositeSessionRetirementFailedRemoveAndRecovery();
     testRetirementLateCallbackAfterFailedRemove();
+    testReplacementGenerationAndRecycledFdOwnership();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -1584,6 +1692,8 @@ int main() {
               << "M8_RENDERER_SESSION_RETIREMENT_REMOVE_RETRY_POST_JOIN=PASS\n"
               << "M8_SESSION_RETIREMENT_LATE_CALLBACK_ADMISSION_REJECTED=PASS\n"
               << "M8_SESSION_RETIREMENT_LATE_CALLBACK_POST_JOIN_RETIREMENT=PASS\n"
+              << "M8_RENDERER_REPLACEMENT_REUSED_FD_STALE_GENERATION_REJECTED=PASS\n"
+              << "M8_RENDERER_REPLACEMENT_NEW_GENERATION_CALLBACK=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

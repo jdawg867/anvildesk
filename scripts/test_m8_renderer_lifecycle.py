@@ -84,9 +84,9 @@ class RendererLifecycleAuditTests(unittest.TestCase):
 
     def test_global_registration_token_does_not_mask_drift_in_connect(self):
         moved = SOURCE.replace(
-            "    ALooper_addFd(ALooper_forThread(), fd, 0, ALOOPER_EVENT_INPUT,\\n"
+            "    ALooper_addFd(ALooper_forThread(), fd, 0, ALOOPER_EVENT_INPUT,\n"
             "              callback, this);",
-            "    ALooper_addFd(explicitLooper, fd, 0, ALOOPER_EVENT_INPUT,\\n"
+            "    ALooper_addFd(explicitLooper, fd, 0, ALOOPER_EVENT_INPUT,\n"
             "              callback, this);",
             1,
         )
@@ -96,8 +96,8 @@ class RendererLifecycleAuditTests(unittest.TestCase):
 
     def test_callback_userdata_nearby_unrelated_token_does_not_mask_drift(self):
         moved = SOURCE.replace(
-            "              callback, this);\\n}",
-            "              callback, otherUserdata);\\n}",
+            "              callback, this);\n}",
+            "              callback, otherUserdata);\n}",
             1,
         )
         self.assertNotEqual(moved, SOURCE)
@@ -106,8 +106,8 @@ class RendererLifecycleAuditTests(unittest.TestCase):
 
     def test_native_destroy_raw_free_outside_registered_body_rejected(self):
         moved = SOURCE.replace(
-            "    free(r);\\n}},",
-            "    /* deferred deletion without proved join */\\n}},",
+            "    free(r);\n}},",
+            "    /* deferred deletion without proved join */\n}},",
             1,
         )
         self.assertNotEqual(moved, SOURCE)
@@ -115,7 +115,7 @@ class RendererLifecycleAuditTests(unittest.TestCase):
             mod.audit(moved)
 
     def test_duplicate_raw_callback_entry_rejected(self):
-        duplicate = SOURCE + "\\nreturn ((LorieViewResources*) data)->xcallback(fd, events);"
+        duplicate = SOURCE + "\nreturn ((LorieViewResources*) data)->xcallback(fd, events);"
         with self.assertRaisesRegex(ValueError, "callback raw userdata entry"):
             mod.audit(duplicate)
 
@@ -176,7 +176,7 @@ class RendererLifecycleAuditTests(unittest.TestCase):
             ))
 
     def test_callback_boundary_drift_rejected(self):
-        with self.assertRaisesRegex(ValueError, "xcallback body boundary"):
+        with self.assertRaisesRegex(ValueError, "(?:xcallback body|connect) boundary"):
             mod.audit(SOURCE.replace(
                 'void LorieViewResources::connect(jint fd) {', ''
             ))

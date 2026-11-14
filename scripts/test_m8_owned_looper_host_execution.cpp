@@ -1704,6 +1704,91 @@ static void testReplacementAdmissionWaitsForPriorWorkerJoin() {
             !replacement.holdsCallbackContext() && newCalls == 0,
             "replacement shutdown leaked platform state");
 }
+// Two external shutdown callers race while the same renderer callback is
+// still executing. The coordinator must serialize them around the real
+// owned-worker join and retire JNI globals and renderer resources once.
+static void testConcurrentSessionRetirementWithActiveCallback() {
+    require(platform.references == 0,
+            "prior concurrent-retirement test leaked fake looper");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "prior concurrent-retirement test left callback registered");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    int token = 42;
+    CompositeRefBackend backend;
+    std::atomic<int> active{0};
+    JoinedCompositeResource resources{&active, &backend};
+    anvildesk_m8::DeferredGlobalRefRetirement<CompositeRefBackend> refs(
+        backend, &token);
+    std::promise<void> entered, release;
+    auto enteredFuture = entered.get_future();
+    auto releaseFuture = release.get_future().share();
+    auto removedFuture = platform.removalSucceeded.get_future();
+    CompositeRefCallbackData data{&entered, &releaseFuture, &active};
+    anvildesk_m8::RendererSessionOwnedLooper owner;
+    require(owner.registerCallback(2000, 2000, ALOOPER_EVENT_INPUT,
+                                   heldRefCallback, &data),
+            "could not register concurrent retirement callback");
+    anvildesk_m8::RendererSessionRetirement<
+        anvildesk_m8::RendererSessionOwnedLooper,
+        decltype(refs), JoinedCompositeResource> retirement(owner, refs, resources);
+    triggerEvent();
+    require(enteredFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready && active == 1,
+            "concurrent retirement callback was not entered");
+
+    std::promise<void> firstStarted, secondStarted;
+    auto firstStartFuture = firstStarted.get_future();
+    auto secondStartFuture = secondStarted.get_future();
+    std::atomic<int> completions{0};
+    std::atomic<int> failures{0};
+    std::thread first([&] {
+        firstStarted.set_value();
+        if (retirement.shutdownAndRetire()) ++completions;
+        else ++failures;
+    });
+    require(firstStartFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "first shutdown caller not started");
+    require(removedFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "first shutdown did not deregister callback");
+    std::thread second([&] {
+        secondStarted.set_value();
+        if (retirement.shutdownAndRetire()) ++completions;
+        else ++failures;
+    });
+    require(secondStartFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "second shutdown caller not started");
+    // Do not call retirement.workerJoined(), owner.holdsCallbackContext()
+    // or any API that takes their mutex while shutdown waits on this callback.
+    require(active == 1 && completions == 0 && failures == 0 &&
+            refs.holdsReference() && backend.deleted == 0 &&
+            resources.calls == 0 && platform.references == 1,
+            "competing shutdown callers released resources before callback join");
+    release.set_value();
+    first.join();
+    second.join();
+    require(completions == 2 && failures == 0 &&
+            retirement.workerJoined() && retirement.retired() &&
+            active == 0 && refs.retired() && !refs.holdsReference() &&
+            backend.deleted == 1 && resources.calls == 1 &&
+            !owner.holdsCallbackContext() && platform.references == 0,
+            "competing shutdown callers failed exactly-once cleanup");
+    require(retirement.shutdownAndRetire() && backend.deleted == 1 &&
+            resources.calls == 1,
+            "terminal concurrent shutdown was not idempotent");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "competing shutdown left stale platform userdata");
+    }
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -1727,6 +1812,7 @@ int main() {
     testRetirementLateCallbackAfterFailedRemove();
     testReplacementGenerationAndRecycledFdOwnership();
     testReplacementAdmissionWaitsForPriorWorkerJoin();
+    testConcurrentSessionRetirementWithActiveCallback();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -1774,6 +1860,8 @@ int main() {
               << "M8_RENDERER_REPLACEMENT_NEW_GENERATION_CALLBACK=PASS\n"
               << "M8_RENDERER_REPLACEMENT_BLOCKED_UNTIL_OLD_JOIN=PASS\n"
               << "M8_RENDERER_REPLACEMENT_REUSED_FD_AFTER_JOIN=PASS\n"
+              << "M8_SESSION_RETIREMENT_CONCURRENT_CALLERS_WAIT_FOR_JOIN=PASS\n"
+              << "M8_SESSION_RETIREMENT_CONCURRENT_CALLERS_EXACTLY_ONCE=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

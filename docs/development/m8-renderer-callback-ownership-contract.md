@@ -88,6 +88,22 @@ state must be scoped to the same terminal callback-owner lifetime.
 Source-inventory PASS means only that the known blocked source matches its
 pin. It never permits production native loading.
 
+## Isolated post-join retirement coordinator
+
+`scripts/m8-renderer-session-retirement.h` now composes the already tested
+worker-join operation, deferred JNI global-reference retirement, and an
+explicit renderer-resource retire callback in a host-only session model.
+Its sanitizer test injects worker join failure, JNI cleanup refusal,
+renderer retirement failure, concurrent retries, and repeated shutdown.
+A failed stage retains the remaining resources for an explicit retry and
+never reports a successful terminal state prematurely.
+
+**Limit:** this is a host protocol model with a synthetic worker join and
+renderer cleanup. It is not wired to `RendererSessionOwnedLooper`, to
+`LorieViewResources`, to a real Java Surface, or to Xorg. In particular,
+a successful host test is not proof of queued platform-callback quiescence
+or the absence of external Java handle races. No native-load gate changes.
+
 ## Mandatory ownership/order contract for a future adapter
 
 1. **Construct owner before registration.** The renderer session must own a

@@ -98,7 +98,7 @@ def audit(source: str) -> list[str]:
     raw_entry = "return ((LorieViewResources*) data)->xcallback(fd, events);"
     entry = connect_body.find(raw_entry, registration)
     userdata = connect_body.find("}, this);", registration)
-    if (entry < 0 or userdata < 0 or not (registration < entry < userdata):
+    if entry < 0 or userdata < 0 or not (registration < entry < userdata):
         raise ValueError("Pinned renderer connect raw userdata drift")
     if userdata - registration > 800:
         raise ValueError("Pinned renderer connect callback layout drift")

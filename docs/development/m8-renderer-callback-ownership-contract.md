@@ -98,6 +98,17 @@ renderer retirement failure, concurrent retries, and repeated shutdown.
 A failed stage retains the remaining resources for an explicit retry and
 never reports a successful terminal state prematurely.
 
+**Owned-worker composite regression (new):**
+`scripts/test_m8_owned_looper_host_execution.cpp` now also composes
+`RendererSessionRetirement` with the real isolated
+`RendererSessionOwnedLooper` implementation, backed by the existing fake
+NDK looper functions. A held callback remains active while a second thread
+begins shutdown; JNI reference and renderer-resource retirement must remain
+blocked until that worker has joined. Terminal repeated shutdown must not
+double-retire either resource. This is more concrete than an injected
+`shutdownAndJoin() == true` fake, **but remains host execution with a fake
+NDK platform**; it is not an Android callback race proof or Lorie integration.
+
 **Limit:** this is a host protocol model with a synthetic worker join and
 renderer cleanup. It is not wired to `RendererSessionOwnedLooper`, to
 `LorieViewResources`, to a real Java Surface, or to Xorg. In particular,

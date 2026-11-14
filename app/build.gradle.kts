@@ -5,7 +5,11 @@ plugins {
 val m8PackagingSpike = providers.gradleProperty("anvildeskM8PackagingSpike").orNull == "true"
 val m8EmulatorTests = providers.gradleProperty("anvildeskM8EmulatorTests").orNull == "true"
 val m8ProductionCandidate = providers.gradleProperty("anvildeskM8ProductionCandidate").orNull == "true"
+val m8CompositeJniDiagnostic = providers.gradleProperty("anvildeskM8CompositeJniDiagnostic").orNull == "true"
 require(!(m8PackagingSpike && m8ProductionCandidate)) { "M8 variants are mutually exclusive" }
+require(!m8CompositeJniDiagnostic || (!m8PackagingSpike && !m8ProductionCandidate && !m8EmulatorTests)) {
+    "Composite JNI diagnostic requires a dedicated ARM64 test-only build"
+}
 
 
 val developmentKeystorePath = providers.environmentVariable("ANVILDESK_DEV_KEYSTORE").orNull
@@ -73,6 +77,10 @@ android {
                 applicationIdSuffix = ".m8spike"
                 versionNameSuffix = "-m8-spike"
             }
+            if (m8CompositeJniDiagnostic) {
+                applicationIdSuffix = ".m8jnidiag"
+                versionNameSuffix = "-m8-jni-diagnostic"
+            }
             if (developmentSigningComplete) {
                 signingConfig = signingConfigs.getByName("ciDevelopment")
             }
@@ -80,6 +88,13 @@ android {
     }
 
     sourceSets.getByName("main").jniLibs.srcDir("build/generated/rootless-runtime/jniLibs")
+    if (m8CompositeJniDiagnostic) {
+        // Only the instrumentation APK can contain this native diagnostic.
+        // Never add this path to the main source set or published APK.
+        sourceSets.getByName("androidTest").jniLibs.srcDir(
+            "build/generated/m8-composite-jni-diagnostic/androidTest/jniLibs"
+        )
+    }
     if (m8PackagingSpike || m8ProductionCandidate) {
         sourceSets.getByName("main").jniLibs.srcDir("build/generated/m8-x11/jniLibs")
     }

@@ -1667,13 +1667,24 @@ static void testReplacementAdmissionWaitsForPriorWorkerJoin() {
     require(!joined && active == 1 && platform.references == 1,
             "previous callback userdata released before join");
     std::atomic<int> newCalls{0};
-    require(!previous.registerCallback(1951, fd, ALOOPER_EVENT_INPUT,
-                                       autoRemovingCallback, &newCalls),
-            "retiring owner admitted a replacement generation before join");
-    require(newCalls == 0 && active == 1 && !joined,
-            "replacement unexpectedly entered before old worker joined");
+    std::promise<void> attemptedRegistration;
+    auto attemptedFuture = attemptedRegistration.get_future();
+    std::atomic<bool> replacementAccepted{true};
+    // The owner serializes admission with shutdown. Registration may block
+    // on its mutex until join completes; request it on a separate thread.
+    std::thread attemptedReplacement([&] {
+        attemptedRegistration.set_value();
+        replacementAccepted = previous.registerCallback(
+            1951, fd, ALOOPER_EVENT_INPUT, autoRemovingCallback, &newCalls);
+    });
+    require(attemptedFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready && newCalls == 0 && active == 1 &&
+            !joined, "replacement unexpectedly entered before old join");
     release.set_value();
     stopping.join();
+    attemptedReplacement.join();
+    require(!replacementAccepted && newCalls == 0,
+            "retiring owner admitted replacement after its terminal shutdown");
     require(joined && active == 0 && !previous.holdsCallbackContext() &&
             platform.references == 0,
             "prior generation worker join did not complete");

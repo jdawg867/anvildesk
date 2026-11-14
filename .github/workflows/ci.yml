@@ -752,6 +752,32 @@ jobs:
       - name: Compile M8 Android instrumentation tests (no emulator execution)
         run: gradle --no-daemon :app:assembleDebugAndroidTest
 
+      - name: Verify pinned standalone composite JNI APK artifact without device
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash -n scripts/verify-m8-composite-jni-test-apks.sh
+          grep -Fqx 'RUN_ID="43561562356"' scripts/verify-m8-composite-jni-test-apks.sh
+          grep -Fqx 'EXPECTED_SHA="dd8009d7b5a1bc714c11feeeaedcee5bdc59c003"' scripts/verify-m8-composite-jni-test-apks.sh
+          grep -Fqx 'ARTIFACT_ID="14100975634"' scripts/verify-m8-composite-jni-test-apks.sh
+          grep -Fqx 'ARTIFACT_DIGEST="sha256:fe3aaac5d1ab25fa350f9321732d5e30022d06d256cde39ae5835bf663af8fc1"' scripts/verify-m8-composite-jni-test-apks.sh
+          expired="$(gh api repos/jdawg867/anvildesk/actions/artifacts/14100975634 --jq '.expired')"
+          if [[ "$expired" == "true" ]]; then
+            echo 'M8_COMPOSITE_JNI_PINNED_PREFLIGHT_SKIPPED_EXPIRED=true'
+            echo 'M8_COMPOSITE_JNI_DEVICE_EXECUTED=false'
+            exit 0
+          fi
+          [[ "$expired" == "false" ]] || exit 1
+          bash scripts/verify-m8-composite-jni-test-apks.sh --verify-artifact \
+            | tee /tmp/m8-composite-jni-apk-artifact-check.txt
+          grep -Fx 'M8_COMPOSITE_JNI_APK_ARTIFACT_PREFLIGHT=PASS' /tmp/m8-composite-jni-apk-artifact-check.txt
+          grep -Fx 'M8_COMPOSITE_JNI_TEST_ONLY_PACKAGE_ISOLATION=PASS' /tmp/m8-composite-jni-apk-artifact-check.txt
+          grep -Fx 'M8_COMPOSITE_JNI_DEVICE_EXECUTED=false' /tmp/m8-composite-jni-apk-artifact-check.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' /tmp/m8-composite-jni-apk-artifact-check.txt
+
       - name: Build separate test-only M8 composite JNI diagnostic APK pair (not installed)
         if: github.event_name == 'pull_request'
         shell: bash

@@ -321,6 +321,8 @@ jobs:
           grep -Fx 'M8_SESSION_RETIREMENT_RENDERER_RECOVERY_CONCURRENT_EXACTLY_ONCE=PASS' m8-owned-looper-host-test.txt
           grep -Fx 'M8_SESSION_RETIREMENT_BLOCKED_RENDERER_SECOND_SHUTDOWN_WAITS=PASS' m8-owned-looper-host-test.txt
           grep -Fx 'M8_SESSION_RETIREMENT_BLOCKED_RENDERER_EXACTLY_ONCE=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_SESSION_RETIREMENT_BLOCKED_RENDERER_FAILURE_RETAINED=PASS' m8-owned-looper-host-test.txt
+          grep -Fx 'M8_SESSION_RETIREMENT_WAITING_SHUTDOWN_RECOVERY_EXACTLY_ONCE=PASS' m8-owned-looper-host-test.txt
           grep -Fx 'M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS' m8-owned-looper-host-test.txt
           grep -Fx 'M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false' m8-owned-looper-host-test.txt
           grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' m8-owned-looper-host-test.txt

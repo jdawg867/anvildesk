@@ -1789,6 +1789,107 @@ static void testConcurrentSessionRetirementWithActiveCallback() {
                 "competing shutdown left stale platform userdata");
     }
 }
+// The first deregistration failure leaves all callback/JNI/renderer state
+// intact. Two independent retry callers then contend for shutdown while the
+// callback worker is still active. Only the joined worker grants retirement.
+static void testConcurrentRetirementRetriesAfterFailedRemove() {
+    require(platform.references == 0, "prior retry test leaked looper");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "prior retry test left platform callback");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    int token = 51;
+    CompositeRefBackend backend;
+    std::atomic<int> active{0};
+    JoinedCompositeResource resources{&active, &backend};
+    anvildesk_m8::DeferredGlobalRefRetirement<CompositeRefBackend> refs(
+        backend, &token);
+    std::promise<void> entered, release;
+    auto enteredFuture = entered.get_future();
+    auto releaseFuture = release.get_future().share();
+    auto removedFuture = platform.removalSucceeded.get_future();
+    CompositeRefCallbackData data{&entered, &releaseFuture, &active};
+    anvildesk_m8::RendererSessionOwnedLooper owner;
+    require(owner.registerCallback(2100, 2100, ALOOPER_EVENT_INPUT,
+                                   heldRefCallback, &data),
+            "could not register concurrent retry callback");
+    anvildesk_m8::RendererSessionRetirement<
+        anvildesk_m8::RendererSessionOwnedLooper,
+        decltype(refs), JoinedCompositeResource> retirement(owner, refs, resources);
+    triggerEvent();
+    require(enteredFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready && active == 1,
+            "concurrent retry callback was not entered");
+
+    const int removeBefore = platform.removeAttempts.load();
+    platform.failRemove.store(true);
+    require(!retirement.shutdownAndRetire(),
+            "first failing removeFd unexpectedly retired resources");
+    require(platform.removeAttempts.load() == removeBefore + 1 &&
+            !retirement.workerJoined() && !retirement.retired() &&
+            owner.holdsCallbackContext() && active == 1 &&
+            refs.holdsReference() && backend.deleted == 0 &&
+            resources.calls == 0 && platform.references == 1,
+            "failed removeFd released callback, JNI or renderer state");
+    require(!owner.registerCallback(2101, 2101, ALOOPER_EVENT_INPUT,
+                                    heldRefCallback, &data),
+            "failed removal reopened callback admission");
+
+    // After failure, both requests race to retry. Whichever acquires the
+    // coordinator mutex first must remove and join the worker; the other
+    // must wait and observe a single terminal retirement.
+    platform.failRemove.store(false);
+    std::promise<void> firstStarted, secondStarted;
+    auto firstFuture = firstStarted.get_future();
+    auto secondFuture = secondStarted.get_future();
+    std::atomic<int> successes{0}, failures{0};
+    std::thread first([&] {
+        firstStarted.set_value();
+        if (retirement.shutdownAndRetire()) ++successes;
+        else ++failures;
+    });
+    std::thread second([&] {
+        secondStarted.set_value();
+        if (retirement.shutdownAndRetire()) ++successes;
+        else ++failures;
+    });
+    require(firstFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready &&
+            secondFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "concurrent retry callers were not started");
+    require(removedFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "concurrent retry did not remove callback registration");
+    // Avoid accessing mutex-protected owner/coordinator state while the
+    // worker is blocked in the active callback.
+    require(active == 1 && successes == 0 && failures == 0 &&
+            refs.holdsReference() && backend.deleted == 0 &&
+            resources.calls == 0 && platform.references == 1,
+            "concurrent retry retired resources before callback worker join");
+    release.set_value();
+    first.join();
+    second.join();
+    require(successes == 2 && failures == 0 &&
+            retirement.workerJoined() && retirement.retired() &&
+            active == 0 && refs.retired() && !refs.holdsReference() &&
+            backend.deleted == 1 && resources.calls == 1 &&
+            platform.removeAttempts.load() == removeBefore + 2 &&
+            !owner.holdsCallbackContext() && platform.references == 0,
+            "competing recovery callers failed exactly-once post-join cleanup");
+    require(retirement.shutdownAndRetire() && backend.deleted == 1 &&
+            resources.calls == 1 && owner.shutdownAndJoin(),
+            "retry cleanup was not terminal and idempotent");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "retry left dangling platform callback userdata");
+    }
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -1813,6 +1914,7 @@ int main() {
     testReplacementGenerationAndRecycledFdOwnership();
     testReplacementAdmissionWaitsForPriorWorkerJoin();
     testConcurrentSessionRetirementWithActiveCallback();
+    testConcurrentRetirementRetriesAfterFailedRemove();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -1862,6 +1964,8 @@ int main() {
               << "M8_RENDERER_REPLACEMENT_REUSED_FD_AFTER_JOIN=PASS\n"
               << "M8_SESSION_RETIREMENT_CONCURRENT_CALLERS_WAIT_FOR_JOIN=PASS\n"
               << "M8_SESSION_RETIREMENT_CONCURRENT_CALLERS_EXACTLY_ONCE=PASS\n"
+              << "M8_SESSION_RETIREMENT_CONCURRENT_RETRY_FAILED_REMOVE_RETAINS=PASS\n"
+              << "M8_SESSION_RETIREMENT_CONCURRENT_RETRY_AFTER_JOIN_EXACTLY_ONCE=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

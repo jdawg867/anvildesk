@@ -2155,6 +2155,108 @@ static void testShutdownDuringBlockedRendererRetirement() {
                 "blocked renderer teardown retained callback userdata");
     }
 }
+// First renderer cleanup blocks, then fails. A second shutdown caller is
+// already contending for the session coordinator mutex; it retries and
+// completes cleanup without repeating JNI deletion or rejoining the worker.
+struct BlockingFailFirstRenderer {
+    BlockingFailFirstRenderer(std::atomic<int>* callbackActive,
+                              CompositeRefBackend* refBackend,
+                              std::promise<void>* enteredSignal,
+                              std::shared_future<void>* unblockSignal)
+        : active(callbackActive), backend(refBackend), entered(enteredSignal),
+          unblock(unblockSignal) {}
+    std::atomic<int>* active;
+    CompositeRefBackend* backend;
+    std::promise<void>* entered;
+    std::shared_future<void>* unblock;
+    std::atomic<int> attempts{0};
+    std::atomic<int> releases{0};
+    bool retire() {
+        const int attempt = ++attempts;
+        if (attempt == 1) {
+            entered->set_value();
+            unblock->wait();
+            return false;
+        }
+        if (active->load() != 0 || backend->deleted.load() != 1)
+            return false;
+        ++releases;
+        return true;
+    }
+};
+static void testBlockedRendererFailureSecondShutdownRecovers() {
+    require(platform.references == 0,
+            "prior blocked-failure test leaked fake looper");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "prior blocked-failure test left callback registered");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    int token = 103;
+    CompositeRefBackend backend;
+    std::atomic<int> active{0}, clientCalls{0};
+    std::promise<void> firstEntered, unblockFirst;
+    auto firstEnteredFuture = firstEntered.get_future();
+    auto unblockFuture = unblockFirst.get_future().share();
+    BlockingFailFirstRenderer renderer(&active, &backend, &firstEntered,
+                                       &unblockFuture);
+    anvildesk_m8::DeferredGlobalRefRetirement<CompositeRefBackend> refs(
+        backend, &token);
+    anvildesk_m8::RendererSessionOwnedLooper owner;
+    require(owner.registerCallback(2500, 2500, ALOOPER_EVENT_INPUT,
+                                   autoRemovingCallback, &clientCalls),
+            "failed to register blocked-failure session");
+    anvildesk_m8::RendererSessionRetirement<
+        anvildesk_m8::RendererSessionOwnedLooper,
+        decltype(refs), BlockingFailFirstRenderer> retirement(owner, refs,
+                                                               renderer);
+    std::atomic<bool> firstResult{true}, secondResult{false};
+    std::atomic<bool> secondFinished{false};
+    std::thread first([&] { firstResult = retirement.shutdownAndRetire(); });
+    require(firstEnteredFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "first renderer retirement did not reach blocking failure");
+    require(backend.deleted == 1 && refs.retired() &&
+            renderer.attempts == 1 && renderer.releases == 0 &&
+            platform.references == 0 && !firstResult,
+            "first blocked cleanup released renderer prematurely");
+    std::promise<void> secondStarted;
+    auto secondStartedFuture = secondStarted.get_future();
+    std::thread second([&] {
+        secondStarted.set_value();
+        secondResult = retirement.shutdownAndRetire();
+        secondFinished = true;
+    });
+    require(secondStartedFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "second cleanup caller never started");
+    require(renderer.attempts == 1 && renderer.releases == 0 &&
+            backend.deleted == 1 && !secondFinished,
+            "second cleanup overtook failed first retirement");
+
+    unblockFirst.set_value();
+    first.join();
+    second.join();
+    require(!firstResult && secondResult && secondFinished &&
+            retirement.workerJoined() && retirement.retired() &&
+            renderer.attempts == 2 && renderer.releases == 1 &&
+            backend.deleted == 1 && !refs.holdsReference() &&
+            !owner.holdsCallbackContext() && platform.references == 0 &&
+            clientCalls == 0,
+            "waiting shutdown did not recover failed renderer cleanup exactly once");
+    require(retirement.shutdownAndRetire() &&
+            renderer.attempts == 2 && renderer.releases == 1 &&
+            backend.deleted == 1 && owner.shutdownAndJoin(),
+            "failed-first cleanup recovery was not idempotent");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "failed-first cleanup left stale platform userdata");
+    }
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -2183,6 +2285,7 @@ int main() {
     testPostJoinPendingJniExceptionConcurrentRetry();
     testPostJoinRendererRetirementFailureAndConcurrentRetry();
     testShutdownDuringBlockedRendererRetirement();
+    testBlockedRendererFailureSecondShutdownRecovers();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -2240,6 +2343,8 @@ int main() {
               << "M8_SESSION_RETIREMENT_RENDERER_RECOVERY_CONCURRENT_EXACTLY_ONCE=PASS\n"
               << "M8_SESSION_RETIREMENT_BLOCKED_RENDERER_SECOND_SHUTDOWN_WAITS=PASS\n"
               << "M8_SESSION_RETIREMENT_BLOCKED_RENDERER_EXACTLY_ONCE=PASS\n"
+              << "M8_SESSION_RETIREMENT_BLOCKED_RENDERER_FAILURE_RETAINED=PASS\n"
+              << "M8_SESSION_RETIREMENT_WAITING_SHUTDOWN_RECOVERY_EXACTLY_ONCE=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

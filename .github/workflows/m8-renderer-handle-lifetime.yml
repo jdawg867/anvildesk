@@ -1,0 +1,42 @@
+name: M8 renderer native handle lifetime gate
+
+on:
+  push:
+    branches: [feature/android-x11-display-input]
+    paths:
+      - 'scripts/m8-renderer-handle-registry.h'
+      - 'scripts/test_m8_renderer_handle_registry.cpp'
+      - '.github/workflows/m8-renderer-handle-lifetime.yml'
+  pull_request:
+    paths:
+      - 'scripts/m8-renderer-handle-registry.h'
+      - 'scripts/test_m8_renderer_handle_registry.cpp'
+      - '.github/workflows/m8-renderer-handle-lifetime.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  renderer-handle-lifetime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile isolated native handle model with sanitizers
+        run: |
+          c++ -std=c++17 -pthread -O1 -g -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Wall -Wextra -Werror -pedantic \
+            scripts/test_m8_renderer_handle_registry.cpp \
+            -o /tmp/m8-renderer-handle-registry-test
+      - name: Exercise concurrent handle invalidation and draining
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 30s /tmp/m8-renderer-handle-registry-test
+          echo 'M8_RENDERER_HANDLE_LEASE_MODEL_HOST=PASS'
+          echo 'M8_RENDERER_HANDLE_ANDROID_JNI_INTEGRATION_VERIFIED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'

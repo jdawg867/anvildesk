@@ -1967,6 +1967,9 @@ static void testPostJoinPendingJniExceptionConcurrentRetry() {
 // terminal JNI ownership after the actual worker join, retry renderer cleanup
 // on explicit request, and never attempt a second global-reference deletion.
 struct RetryableRendererCleanup {
+    RetryableRendererCleanup(std::atomic<int>* callbackActive,
+                             CompositeRefBackend* refBackend)
+        : active(callbackActive), backend(refBackend) {}
     std::atomic<int>* active;
     CompositeRefBackend* backend;
     std::atomic<bool> fail{true};

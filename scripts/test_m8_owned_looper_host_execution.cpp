@@ -2214,14 +2214,17 @@ static void testBlockedRendererFailureSecondShutdownRecovers() {
         decltype(refs), BlockingFailFirstRenderer> retirement(owner, refs,
                                                                renderer);
     std::atomic<bool> firstResult{true}, secondResult{false};
-    std::atomic<bool> secondFinished{false};
-    std::thread first([&] { firstResult = retirement.shutdownAndRetire(); });
+    std::atomic<bool> firstFinished{false}, secondFinished{false};
+    std::thread first([&] {
+        firstResult = retirement.shutdownAndRetire();
+        firstFinished = true;
+    });
     require(firstEnteredFuture.wait_for(std::chrono::seconds(5)) ==
                 std::future_status::ready,
             "first renderer retirement did not reach blocking failure");
     require(backend.deleted == 1 && refs.retired() &&
             renderer.attempts == 1 && renderer.releases == 0 &&
-            platform.references == 0 && !firstResult,
+            platform.references == 0 && !firstFinished,
             "first blocked cleanup released renderer prematurely");
     std::promise<void> secondStarted;
     auto secondStartedFuture = secondStarted.get_future();

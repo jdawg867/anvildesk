@@ -211,6 +211,18 @@ retirement. The first caller reports failure and the second success; a
 third call remains idempotent. These are host-side ordering checks, not
 physical Android callback-quiescence evidence.
 
+**Replacement publication after complete previous renderer retirement:** a
+host-only `RendererReplacementHandoff` now gates registration of a new
+session on the *entire* previous retirement coordinator, not just its
+callback-worker join. The fake-NDK test holds previous renderer cleanup
+open after JNI deletion, rejects replacement, injects one cleanup failure,
+rejects replacement again, and finally permits reuse of the same FD only
+after a successful retirement retry. The handoff publishes readiness
+monotonically and rejects duplicate replacement registration through the
+next session owner. This is an isolated admission model; unmodified
+upstream Lorie, Java Surface lifetime and production JNI callback ownership
+remain **unverified**.
+
 **Limit:** this is a host protocol model with a synthetic worker join and
 renderer cleanup. It is not wired to `RendererSessionOwnedLooper`, to
 `LorieViewResources`, to a real Java Surface, or to Xorg. In particular,

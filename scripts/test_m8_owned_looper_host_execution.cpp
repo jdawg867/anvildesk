@@ -1963,6 +1963,92 @@ static void testPostJoinPendingJniExceptionConcurrentRetry() {
                 "post-exception retirement left registered platform userdata");
     }
 }
+// JNI retirement can succeed while renderer retirement fails. Preserve
+// terminal JNI ownership after the actual worker join, retry renderer cleanup
+// on explicit request, and never attempt a second global-reference deletion.
+struct RetryableRendererCleanup {
+    std::atomic<int>* active;
+    CompositeRefBackend* backend;
+    std::atomic<bool> fail{true};
+    std::atomic<int> attempts{0};
+    std::atomic<int> releases{0};
+    bool retire() {
+        ++attempts;
+        if (fail || active->load() != 0 || backend->deleted.load() != 1)
+            return false;
+        ++releases;
+        return true;
+    }
+};
+static void testPostJoinRendererRetirementFailureAndConcurrentRetry() {
+    require(platform.references == 0,
+            "prior renderer-failure test leaked looper reference");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "prior renderer-failure test left callback registered");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    int token = 81;
+    CompositeRefBackend backend;
+    std::atomic<int> active{0}, clientCalls{0};
+    RetryableRendererCleanup resources{&active, &backend};
+    anvildesk_m8::DeferredGlobalRefRetirement<CompositeRefBackend> refs(
+        backend, &token);
+    anvildesk_m8::RendererSessionOwnedLooper owner;
+    require(owner.registerCallback(2300, 2300, ALOOPER_EVENT_INPUT,
+                                   autoRemovingCallback, &clientCalls),
+            "could not register renderer-failure retirement callback");
+    anvildesk_m8::RendererSessionRetirement<
+        anvildesk_m8::RendererSessionOwnedLooper,
+        decltype(refs), RetryableRendererCleanup> retirement(owner, refs, resources);
+
+    require(!retirement.shutdownAndRetire(),
+            "failed renderer cleanup unexpectedly completed retirement");
+    require(retirement.workerJoined() && !retirement.retired() &&
+            refs.retired() && !refs.holdsReference() && backend.deleted == 1 &&
+            resources.attempts == 1 && resources.releases == 0 &&
+            !owner.holdsCallbackContext() && platform.references == 0,
+            "failed renderer cleanup did not preserve post-join partial state");
+    require(!retirement.shutdownAndRetire() &&
+            backend.deleted == 1 && resources.attempts == 2 &&
+            resources.releases == 0 && !retirement.retired(),
+            "second renderer failure re-deleted a JNI global reference");
+    require(!owner.registerCallback(2301, 2300, ALOOPER_EVENT_INPUT,
+                                    autoRemovingCallback, &clientCalls),
+            "partially retired renderer reopened callback admission");
+
+    resources.fail = false;
+    std::atomic<int> successes{0}, failures{0};
+    std::thread first([&] {
+        if (retirement.shutdownAndRetire()) ++successes;
+        else ++failures;
+    });
+    std::thread second([&] {
+        if (retirement.shutdownAndRetire()) ++successes;
+        else ++failures;
+    });
+    first.join();
+    second.join();
+    require(successes == 2 && failures == 0 &&
+            retirement.workerJoined() && retirement.retired() &&
+            refs.retired() && !refs.holdsReference() &&
+            backend.deleted == 1 && resources.attempts == 3 &&
+            resources.releases == 1 && clientCalls == 0 &&
+            !owner.holdsCallbackContext() && platform.references == 0,
+            "renderer retry did not complete exactly once after JNI deletion");
+    require(retirement.shutdownAndRetire() &&
+            backend.deleted == 1 && resources.attempts == 3 &&
+            resources.releases == 1 && owner.shutdownAndJoin(),
+            "terminal renderer failure recovery was not idempotent");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "renderer cleanup recovery left stale platform userdata");
+    }
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -1989,6 +2075,7 @@ int main() {
     testConcurrentSessionRetirementWithActiveCallback();
     testConcurrentRetirementRetriesAfterFailedRemove();
     testPostJoinPendingJniExceptionConcurrentRetry();
+    testPostJoinRendererRetirementFailureAndConcurrentRetry();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -2042,6 +2129,8 @@ int main() {
               << "M8_SESSION_RETIREMENT_CONCURRENT_RETRY_AFTER_JOIN_EXACTLY_ONCE=PASS\n"
               << "M8_SESSION_RETIREMENT_PENDING_JNI_EXCEPTION_RETAINS_RESOURCES=PASS\n"
               << "M8_SESSION_RETIREMENT_PENDING_JNI_EXCEPTION_CONCURRENT_RECOVERY=PASS\n"
+              << "M8_SESSION_RETIREMENT_RENDERER_FAILURE_JNI_DELETED_ONCE=PASS\n"
+              << "M8_SESSION_RETIREMENT_RENDERER_RECOVERY_CONCURRENT_EXACTLY_ONCE=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

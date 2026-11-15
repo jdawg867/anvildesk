@@ -181,6 +181,17 @@ observe success while deleting the reference and retiring renderer resources
 exactly once. This does **not** prove exception handling or JavaVM thread
 attachment in upstream Lorie; those remain production blockers.
 
+**Renderer cleanup fails after JNI retirement succeeds:** the isolated
+fake-NDK owned-looper test now forces the callback worker to join and the
+global JNI reference to retire successfully, then injects two failures in
+renderer-resource retirement. A failed renderer cleanup must keep the
+coordinator nonterminal without re-deleting the JNI reference or reopening
+callback registration. Once the synthetic renderer failure clears, two
+competing cleanup callers must both complete successfully, with exactly
+one global-reference deletion and one successful renderer retirement.
+This establishes host-side retry ordering, not upstream Lorie integration
+or real Android renderer safety.
+
 **Limit:** this is a host protocol model with a synthetic worker join and
 renderer cleanup. It is not wired to `RendererSessionOwnedLooper`, to
 `LorieViewResources`, to a real Java Surface, or to Xorg. In particular,

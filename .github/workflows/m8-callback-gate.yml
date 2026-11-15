@@ -1,0 +1,30 @@
+name: M8 host callback lifetime gate
+
+on:
+  push:
+    branches: [feature/android-x11-display-input]
+    paths:
+      - 'native/m8/m8-callback-gate.hpp'
+      - 'native/m8/test-m8-callback-gate.cpp'
+      - '.github/workflows/m8-callback-gate.yml'
+  pull_request:
+    paths:
+      - 'native/m8/m8-callback-gate.hpp'
+      - 'native/m8/test-m8-callback-gate.cpp'
+      - '.github/workflows/m8-callback-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-callback-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile with warnings and sanitizers
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic -pthread -fsanitize=address,undefined -fno-omit-frame-pointer -g native/m8/test-m8-callback-gate.cpp -o /tmp/m8-callback-gate-tests
+      - name: Test callback admission and drain
+        run: /tmp/m8-callback-gate-tests

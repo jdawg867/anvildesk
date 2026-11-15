@@ -1890,6 +1890,79 @@ static void testConcurrentRetirementRetriesAfterFailedRemove() {
                 "retry left dangling platform callback userdata");
     }
 }
+// A joined callback worker is necessary but not sufficient for deleting a
+// JNI global ref: the retiring thread may have a pending JNI exception.
+// Keep the reference and renderer alive for retries, then allow two callers
+// to contend for exactly-once cleanup after the simulated exception clears.
+static void testPostJoinPendingJniExceptionConcurrentRetry() {
+    require(platform.references == 0,
+            "prior exception-retirement test leaked looper reference");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "prior exception-retirement test left callback registered");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    int token = 64;
+    CompositeRefBackend backend;
+    backend.pendingException = true;
+    std::atomic<int> active{0};
+    JoinedCompositeResource resources{&active, &backend};
+    anvildesk_m8::DeferredGlobalRefRetirement<CompositeRefBackend> refs(
+        backend, &token);
+    std::atomic<int> clientCalls{0};
+    anvildesk_m8::RendererSessionOwnedLooper owner;
+    require(owner.registerCallback(2200, 2200, ALOOPER_EVENT_INPUT,
+                                   autoRemovingCallback, &clientCalls),
+            "could not register pending-exception retirement callback");
+    anvildesk_m8::RendererSessionRetirement<
+        anvildesk_m8::RendererSessionOwnedLooper,
+        decltype(refs), JoinedCompositeResource> retirement(owner, refs, resources);
+
+    require(!retirement.shutdownAndRetire(),
+            "pending JNI exception unexpectedly allowed global ref deletion");
+    require(retirement.workerJoined() && !retirement.retired() &&
+            refs.holdsReference() && !refs.retired() &&
+            backend.deleted == 0 && resources.calls == 0 &&
+            !owner.holdsCallbackContext() && platform.references == 0,
+            "joined worker incorrectly released refs or renderer with exception");
+    require(!retirement.shutdownAndRetire() && refs.holdsReference() &&
+            backend.deleted == 0 && resources.calls == 0,
+            "pending JNI exception retry unexpectedly completed retirement");
+    require(!owner.registerCallback(2201, 2200, ALOOPER_EVENT_INPUT,
+                                    autoRemovingCallback, &clientCalls),
+            "post-join failed retirement reopened callback admission");
+
+    backend.pendingException = false;
+    std::atomic<int> successes{0}, failures{0};
+    std::thread first([&] {
+        if (retirement.shutdownAndRetire()) ++successes;
+        else ++failures;
+    });
+    std::thread second([&] {
+        if (retirement.shutdownAndRetire()) ++successes;
+        else ++failures;
+    });
+    first.join();
+    second.join();
+    require(successes == 2 && failures == 0 &&
+            retirement.workerJoined() && retirement.retired() &&
+            !refs.holdsReference() && refs.retired() &&
+            backend.deleted == 1 && resources.calls == 1 &&
+            !owner.holdsCallbackContext() && platform.references == 0 &&
+            clientCalls == 0,
+            "concurrent JNI exception recovery did not retire exactly once");
+    require(retirement.shutdownAndRetire() && backend.deleted == 1 &&
+            resources.calls == 1 && owner.shutdownAndJoin(),
+            "post-JNI-exception retirement was not idempotent");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "post-exception retirement left registered platform userdata");
+    }
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -1915,6 +1988,7 @@ int main() {
     testReplacementAdmissionWaitsForPriorWorkerJoin();
     testConcurrentSessionRetirementWithActiveCallback();
     testConcurrentRetirementRetriesAfterFailedRemove();
+    testPostJoinPendingJniExceptionConcurrentRetry();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -1966,6 +2040,8 @@ int main() {
               << "M8_SESSION_RETIREMENT_CONCURRENT_CALLERS_EXACTLY_ONCE=PASS\n"
               << "M8_SESSION_RETIREMENT_CONCURRENT_RETRY_FAILED_REMOVE_RETAINS=PASS\n"
               << "M8_SESSION_RETIREMENT_CONCURRENT_RETRY_AFTER_JOIN_EXACTLY_ONCE=PASS\n"
+              << "M8_SESSION_RETIREMENT_PENDING_JNI_EXCEPTION_RETAINS_RESOURCES=PASS\n"
+              << "M8_SESSION_RETIREMENT_PENDING_JNI_EXCEPTION_CONCURRENT_RECOVERY=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

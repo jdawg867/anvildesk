@@ -2336,6 +2336,18 @@ static void testReplacementHandoffWaitsForRendererRetirement() {
             resources.attempts == 2 && resources.releases == 1 &&
             backend.deleted == 1 && refs.retired(),
             "successful retry did not publish completed old retirement");
+    // The fake ALooper is shared across sequential sessions. Once the old
+    // owner has actually joined, reset its one-shot deregistration signal
+    // before the replacement's own removeFd can signal completion.
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr &&
+                platform.references == 0,
+                "previous session still owns fake platform state");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
     require(handoff.registerReplacement(replacement, 2601, fd,
                                         ALOOPER_EVENT_INPUT,
                                         autoRemovingCallback, &newCalls),

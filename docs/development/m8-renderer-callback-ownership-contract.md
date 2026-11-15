@@ -170,6 +170,17 @@ both must report success and only one JNI deletion and one renderer
 retirement may occur. This is a simulated Android looper regression, not
 evidence that a production Lorie callback has been made safe.
 
+**Pending JNI exception after callback-worker join:** an isolated host
+regression now joins a real `RendererSessionOwnedLooper` worker (using
+the fake NDK shim), then injects a simulated pending JNI exception on the
+global-reference cleanup backend. The retirement coordinator must return
+failure, keep the JNI global reference and renderer resources alive, remain
+closed to callback registration, and tolerate repeated unsuccessful retries.
+After clearing the exception, two concurrent cleanup callers must both
+observe success while deleting the reference and retiring renderer resources
+exactly once. This does **not** prove exception handling or JavaVM thread
+attachment in upstream Lorie; those remain production blockers.
+
 **Limit:** this is a host protocol model with a synthetic worker join and
 renderer cleanup. It is not wired to `RendererSessionOwnedLooper`, to
 `LorieViewResources`, to a real Java Surface, or to Xorg. In particular,

@@ -112,6 +112,7 @@ int ALooper_pollOnce(int, int*, int*, void**) {
 #include "m8-renderer-callback-jni-scope.h"
 #include "m8-renderer-jni-global-ref-retirement.h"
 #include "m8-renderer-session-retirement.h"
+#include "m8-renderer-replacement-handoff.h"
 #include "m8-renderer-session-callback-context.h"
 static void require(bool ok, const char* why) {
     if (!ok) throw std::runtime_error(why);
@@ -2260,6 +2261,100 @@ static void testBlockedRendererFailureSecondShutdownRecovers() {
                 "failed-first cleanup left stale platform userdata");
     }
 }
+// Publication of a replacement generation must wait for full old renderer
+// retirement, not merely ALooper_removeFd() or callback-worker join.
+// The first cleanup blocks then fails; a retry publishes replacement only
+// after JNI ref deletion and renderer cleanup both finish.
+static void testReplacementHandoffWaitsForRendererRetirement() {
+    require(platform.references == 0,
+            "prior handoff test leaked platform reference");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "prior handoff test retained callback userdata");
+        platform.removalSucceeded = std::promise<void>{};
+        platform.pending = false;
+        platform.wake = false;
+    }
+    int token = 111;
+    CompositeRefBackend backend;
+    std::atomic<int> active{0}, oldCalls{0}, newCalls{0};
+    std::promise<void> entered, unblock;
+    auto enteredFuture = entered.get_future();
+    auto unblockFuture = unblock.get_future().share();
+    BlockingFailFirstRenderer resources(&active, &backend, &entered,
+                                         &unblockFuture);
+    anvildesk_m8::DeferredGlobalRefRetirement<CompositeRefBackend> refs(
+        backend, &token);
+    anvildesk_m8::RendererSessionOwnedLooper previous;
+    constexpr int fd = 2600;
+    require(previous.registerCallback(2600, fd, ALOOPER_EVENT_INPUT,
+                                      autoRemovingCallback, &oldCalls),
+            "previous handoff session registration failed");
+    anvildesk_m8::RendererSessionRetirement<
+        anvildesk_m8::RendererSessionOwnedLooper,
+        decltype(refs), BlockingFailFirstRenderer> retirement(previous, refs,
+                                                               resources);
+    anvildesk_m8::RendererReplacementHandoff<decltype(retirement)> handoff(
+        retirement);
+    std::atomic<bool> firstResult{true}, firstFinished{false};
+    std::thread first([&] {
+        firstResult = handoff.retireAndPublish();
+        firstFinished = true;
+    });
+    require(enteredFuture.wait_for(std::chrono::seconds(5)) ==
+                std::future_status::ready,
+            "previous renderer teardown did not enter blocking cleanup");
+    require(!handoff.published() && !firstFinished &&
+            refs.retired() && backend.deleted == 1 &&
+            resources.attempts == 1 && resources.releases == 0 &&
+            platform.references == 0,
+            "handoff published before previous renderer was retired");
+
+    // The replacement owner is separate but cannot accept registration
+    // through the handoff barrier while prior renderer cleanup is in flight.
+    anvildesk_m8::RendererSessionOwnedLooper replacement;
+    require(!handoff.registerReplacement(replacement, 2601, fd,
+                                         ALOOPER_EVENT_INPUT,
+                                         autoRemovingCallback, &newCalls),
+            "replacement admitted during old renderer retirement");
+    require(!handoff.published() && oldCalls == 0 && newCalls == 0 &&
+            resources.releases == 0,
+            "replacement changed client state before retirement");
+    unblock.set_value();
+    first.join();
+    require(!firstResult && firstFinished && !handoff.published() &&
+            resources.attempts == 1 && backend.deleted == 1,
+            "failed prior renderer retirement published replacement");
+    require(!handoff.registerReplacement(replacement, 2601, fd,
+                                         ALOOPER_EVENT_INPUT,
+                                         autoRemovingCallback, &newCalls),
+            "replacement admitted after failed prior retirement");
+
+    require(handoff.retireAndPublish() && handoff.published() &&
+            retirement.workerJoined() && retirement.retired() &&
+            resources.attempts == 2 && resources.releases == 1 &&
+            backend.deleted == 1 && refs.retired(),
+            "successful retry did not publish completed old retirement");
+    require(handoff.registerReplacement(replacement, 2601, fd,
+                                        ALOOPER_EVENT_INPUT,
+                                        autoRemovingCallback, &newCalls),
+            "fully retired prior renderer did not permit replacement");
+    require(!handoff.registerReplacement(replacement, 2602, fd,
+                                         ALOOPER_EVENT_INPUT,
+                                         autoRemovingCallback, &newCalls),
+            "replacement admitted duplicate registration");
+    require(replacement.shutdownAndJoin() && previous.shutdownAndJoin() &&
+            handoff.retireAndPublish() && backend.deleted == 1 &&
+            resources.attempts == 2 && resources.releases == 1 &&
+            newCalls == 0 && oldCalls == 0 && platform.references == 0,
+            "published replacement handoff leaked or duplicated resources");
+    {
+        std::lock_guard<std::mutex> lock(platform.mutex);
+        require(!platform.registered && platform.userdata == nullptr,
+                "replacement handoff left stale platform userdata");
+    }
+}
 int main() {
     testWakeJoinAndRemoveRetry();
     testShutdownWithoutRegisteredCallback();
@@ -2289,6 +2384,7 @@ int main() {
     testPostJoinRendererRetirementFailureAndConcurrentRetry();
     testShutdownDuringBlockedRendererRetirement();
     testBlockedRendererFailureSecondShutdownRecovers();
+    testReplacementHandoffWaitsForRendererRetirement();
     std::cout << "M8_OWNED_LOOPER_HOST_EXECUTION=PASS\n"
               << "M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS\n"
               << "M8_OWNED_LOOPER_CALLBACK_WORKER_THREAD=PASS\n"
@@ -2348,6 +2444,9 @@ int main() {
               << "M8_SESSION_RETIREMENT_BLOCKED_RENDERER_EXACTLY_ONCE=PASS\n"
               << "M8_SESSION_RETIREMENT_BLOCKED_RENDERER_FAILURE_RETAINED=PASS\n"
               << "M8_SESSION_RETIREMENT_WAITING_SHUTDOWN_RECOVERY_EXACTLY_ONCE=PASS\n"
+              << "M8_REPLACEMENT_HANDOFF_BLOCKED_RENDERER_NOT_PUBLISHED=PASS\n"
+              << "M8_REPLACEMENT_HANDOFF_FAILED_RETIREMENT_NOT_PUBLISHED=PASS\n"
+              << "M8_REPLACEMENT_HANDOFF_SUCCESSFUL_RETRY_ALLOWS_REGISTRATION=PASS\n"
               << "M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS\n"
               << "M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false\n"
               << "M8_NATIVE_LOAD_AUTHORIZED=false\n";

@@ -160,6 +160,16 @@ owner or retirement mutexes from the blocked main thread. This remains
 fake-NDK host evidence only; Lorie and production Android teardown are
 still not authorized.
 
+**Competing retry after failed deregistration:** the isolated fake-NDK
+host test now holds a renderer callback active, injects an initial
+`ALooper_removeFd` failure, and requires JNI reference, renderer state,
+and callback userdata to remain owned with registration admission closed.
+Two independent shutdown callers then retry concurrently. Neither may
+retire resources while the callback remains active; after worker join,
+both must report success and only one JNI deletion and one renderer
+retirement may occur. This is a simulated Android looper regression, not
+evidence that a production Lorie callback has been made safe.
+
 **Limit:** this is a host protocol model with a synthetic worker join and
 renderer cleanup. It is not wired to `RendererSessionOwnedLooper`, to
 `LorieViewResources`, to a real Java Surface, or to Xorg. In particular,

@@ -2341,9 +2341,12 @@ static void testReplacementHandoffWaitsForRendererRetirement() {
     // before the replacement's own removeFd can signal completion.
     {
         std::lock_guard<std::mutex> lock(platform.mutex);
+        // The replacement owner was constructed above and already acquired
+        // its own looper reference, even though registration is gated.
+        // The retired previous owner must have released its reference.
         require(!platform.registered && platform.userdata == nullptr &&
-                platform.references == 0,
-                "previous session still owns fake platform state");
+                platform.references == 1,
+                "previous session leaked registration or looper reference");
         platform.removalSucceeded = std::promise<void>{};
         platform.pending = false;
         platform.wake = false;

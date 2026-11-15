@@ -201,6 +201,16 @@ resource. Once the blocking cleanup finishes, both callers must succeed
 and final cleanup must remain exactly once. This checks coordinator mutex
 ordering, not Android callback-worker or Lorie production integration.
 
+**First overlapping renderer retirement fails, waiting shutdown retries:** the
+fake-NDK host harness now blocks the first renderer cleanup operation after
+the owned looper has joined and the JNI global reference has been retired.
+A second shutdown caller waits behind the retirement coordinator. The first
+operation then fails; the second must retry renderer cleanup successfully,
+without duplicating JNI deletion, callback-context release, or renderer
+retirement. The first caller reports failure and the second success; a
+third call remains idempotent. These are host-side ordering checks, not
+physical Android callback-quiescence evidence.
+
 **Limit:** this is a host protocol model with a synthetic worker join and
 renderer cleanup. It is not wired to `RendererSessionOwnedLooper`, to
 `LorieViewResources`, to a real Java Surface, or to Xorg. In particular,

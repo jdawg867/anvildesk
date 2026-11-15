@@ -1,0 +1,53 @@
+name: M8 owned-looper session integration gate
+
+on:
+  push:
+    branches: [feature/android-x11-display-input]
+    paths:
+      - 'scripts/m8-renderer-*.h'
+      - 'scripts/m8-android-owned-looper-thread.cpp'
+      - 'scripts/test_m8_owned_looper_host_execution.cpp'
+      - '.github/workflows/m8-owned-looper-session-gate.yml'
+  pull_request:
+    paths:
+      - 'scripts/m8-renderer-*.h'
+      - 'scripts/m8-android-owned-looper-thread.cpp'
+      - 'scripts/test_m8_owned_looper_host_execution.cpp'
+      - '.github/workflows/m8-owned-looper-session-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-session-ownership:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile real isolated owned-looper implementation with fake NDK shim
+        run: |
+          c++ -std=c++17 -pthread -D__ANDROID__ \
+            -Iscripts/m8-owned-looper-test-shim -O1 -g -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Wall -Wextra -Werror \
+            scripts/test_m8_owned_looper_host_execution.cpp \
+            -o /tmp/m8-owned-looper-session-test
+      - name: Require callback drain and worker-join regression markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 45s /tmp/m8-owned-looper-session-test | tee /tmp/m8-owned-looper-session.log
+          for marker in \
+            M8_OWNED_LOOPER_HOST_EXECUTION=PASS \
+            M8_OWNED_LOOPER_COMPETING_SHUTDOWN=PASS \
+            M8_RENDERER_OWNERSHIP_FAILED_REMOVE_RETRY_JOIN=PASS \
+            M8_RENDERER_UNIFIED_OWNER_CONCURRENT_CALLBACK_DRAIN=PASS \
+            M8_REPLACEMENT_HANDOFF_FAILED_RETIREMENT_NOT_PUBLISHED=PASS \
+            M8_OWNED_LOOPER_SELF_JOIN_REJECTED=PASS \
+            M8_ANDROID_LOOPER_RUNTIME_VERIFIED=false \
+            M8_NATIVE_LOAD_AUTHORIZED=false; do
+            grep -Fx -- "$marker" /tmp/m8-owned-looper-session.log
+          done

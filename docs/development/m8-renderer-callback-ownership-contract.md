@@ -223,6 +223,24 @@ next session owner. This is an isolated admission model; unmodified
 upstream Lorie, Java Surface lifetime and production JNI callback ownership
 remain **unverified**.
 
+**Actual Android integration boundary (source review):** the
+`M8RendererAdapter` owns a Surface generation and denies re-attachment after
+a failed native `destroy()` by poisoning its instance.
+`M8LorieNativeRendererBridge` is separately terminal after a destroy attempt;
+it cannot provide a successful retry after a native failure.
+`M8RendererSession` is a synthetic-handle lifecycle model and is not
+instantiated as a production native session. Therefore the host-only
+`RendererReplacementHandoff` must **not** be attached to Java
+`detach()` or `nativeDestroy()` yet: neither entrypoint proves that the
+upstream raw-`this` looper callback has been removed, worker-joined,
+JNI references safely retired, and all native renderer resources released.
+Future integration must provide that evidence from a single owned native
+session and propagate a verified terminal-retirement result back to Java;
+a Java detach return or exception alone is insufficient.
+Until that complete contract exists, leave the current fail-closed
+Java behavior intact, keep the native-load gate false, and do not merge
+PR #21.
+
 **Limit:** this is a host protocol model with a synthetic worker join and
 renderer cleanup. It is not wired to `RendererSessionOwnedLooper`, to
 `LorieViewResources`, to a real Java Surface, or to Xorg. In particular,

@@ -192,6 +192,15 @@ one global-reference deletion and one successful renderer retirement.
 This establishes host-side retry ordering, not upstream Lorie integration
 or real Android renderer safety.
 
+**Concurrent shutdown during in-flight renderer retirement:** the fake-NDK
+owned-looper host test now blocks renderer retirement *after* verified worker
+join and successful JNI reference deletion, then issues a second shutdown
+request. The second caller must not repeat JNI deletion, enter renderer
+retirement twice, or report terminal success before the first retires the
+resource. Once the blocking cleanup finishes, both callers must succeed
+and final cleanup must remain exactly once. This checks coordinator mutex
+ordering, not Android callback-worker or Lorie production integration.
+
 **Limit:** this is a host protocol model with a synthetic worker join and
 renderer cleanup. It is not wired to `RendererSessionOwnedLooper`, to
 `LorieViewResources`, to a real Java Surface, or to Xorg. In particular,

@@ -51,6 +51,15 @@ jobs:
           ANVILDESK_M8_ART_DIAGNOSTIC_APK_BUILD: 'true'
         shell: bash
         run: bash scripts/build-m8-art-registration-test-apks.sh
+      - name: Retain isolated test APK pair for controlled provenance checks
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-art-registration-test-apks-arm64
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          if-no-files-found: error
+          retention-days: 3
       - name: Confirm no device execution or production loading
         run: |
           echo 'M8_ART_DIAGNOSTIC_DEVICE_EXECUTED=false'

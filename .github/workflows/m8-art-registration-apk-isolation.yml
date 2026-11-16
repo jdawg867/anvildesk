@@ -9,6 +9,7 @@ on:
       - 'scripts/m8-android-art-registration-probe.cpp'
       - 'app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8ArtRegistrationTarget.java'
       - 'app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8ArtRegistrationDiagnostic.java'
+      - 'app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8ArtRegistrationInstrumentedTest.java'
       - '.github/workflows/m8-art-registration-apk-isolation.yml'
   pull_request:
     paths:
@@ -17,6 +18,7 @@ on:
       - 'scripts/m8-android-art-registration-probe.cpp'
       - 'app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8ArtRegistrationTarget.java'
       - 'app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8ArtRegistrationDiagnostic.java'
+      - 'app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8ArtRegistrationInstrumentedTest.java'
       - '.github/workflows/m8-art-registration-apk-isolation.yml'
   workflow_dispatch:
 

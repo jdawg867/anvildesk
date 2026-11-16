@@ -55,7 +55,7 @@ def verify(java: str, native: str) -> None:
                       "JNI_OnLoad", "libXlorie.so"):
         if forbidden in java:
             raise ValueError("executable native path in inert contract: " + forbidden)
-    if re.search(r"\\bnative\\s+(?:int|void|long|boolean|byte|short|float|double|String)\\s+\\w+\\s*\\(", java):
+    if re.search(r"\bnative\s+(?:int|void|long|boolean|byte|short|float|double|String)\s+\w+\s*\(", java):
         raise ValueError("JNI native method declared in inert contract")
     if "registry_.acquire(handle)" not in native:
         raise ValueError("native lease admission removed")

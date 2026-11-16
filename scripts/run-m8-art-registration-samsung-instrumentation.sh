@@ -29,7 +29,7 @@ fi
 for tool in gh unzip readelf grep mktemp find base64; do
   command -v "$tool" >/dev/null || { echo "STOP: missing $tool" >&2; exit 1; }
 done
-: ": "${ANDROID_HOME:?Android SDK required}""
+: "${ANDROID_HOME:?Android SDK required}"
 AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
 [[ -x "$AAPT" ]] || { echo 'STOP: missing aapt 36' >&2; exit 1; }
 tmp="$(mktemp -d)"

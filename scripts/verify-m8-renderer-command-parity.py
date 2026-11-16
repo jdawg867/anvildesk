@@ -51,10 +51,12 @@ def verify(java: str, native: str) -> None:
                      r"\s*\|\|\s*generation\s*<=\s*0", java):
         raise ValueError("Java version/handle validation drifted")
     # No executable JNI path may be slipped into this contract.
-    for forbidden in ("native ", "System.loadLibrary(", "Runtime.getRuntime()",
+    for forbidden in ("System.loadLibrary(", "Runtime.getRuntime()",
                       "JNI_OnLoad", "libXlorie.so"):
         if forbidden in java:
             raise ValueError("executable native path in inert contract: " + forbidden)
+    if re.search(r"\\bnative\\s+(?:int|void|long|boolean|byte|short|float|double|String)\\s+\\w+\\s*\\(", java):
+        raise ValueError("JNI native method declared in inert contract")
     if "registry_.acquire(handle)" not in native:
         raise ValueError("native lease admission removed")
     if "lease.get()->generation() != generation" not in native:

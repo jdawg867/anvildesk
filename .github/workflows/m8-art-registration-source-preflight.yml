@@ -25,13 +25,16 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
-      - uses: android-actions/setup-android@v3
       - name: Install pinned Android NDK
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager 'ndk;27.2.12479018'
+          : "${ANDROID_HOME:?Runner Android SDK required}"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          "$SDKMANAGER" --install 'ndk;27.2.12479018'
       - name: Cross-compile test-only ARM64 ART probe
         shell: bash
         run: |

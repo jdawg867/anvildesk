@@ -1,0 +1,51 @@
+name: M8 synthetic JNI registration API rollback
+
+on:
+  push:
+    branches: [feature/android-x11-display-input]
+    paths:
+      - 'scripts/m8-renderer-diagnostic-jni-registration-backend.h'
+      - 'scripts/m8-renderer-diagnostic-registration.h'
+      - 'scripts/test_m8_renderer_diagnostic_jni_registration_backend.cpp'
+      - '.github/workflows/m8-synthetic-jni-registration.yml'
+  pull_request:
+    paths:
+      - 'scripts/m8-renderer-diagnostic-jni-registration-backend.h'
+      - 'scripts/m8-renderer-diagnostic-registration.h'
+      - 'scripts/test_m8_renderer_diagnostic_jni_registration_backend.cpp'
+      - '.github/workflows/m8-synthetic-jni-registration.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-jni-registration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build fake JNI function-table registration test with sanitizers
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -pthread -O1 -g -fno-omit-frame-pointer \
+            -I"$JAVA_HOME/include" -I"$JAVA_HOME/include/linux" \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Wall -Wextra -Werror -pedantic \
+            scripts/test_m8_renderer_diagnostic_jni_registration_backend.cpp \
+            -o /tmp/m8-synthetic-jni-registration
+      - name: Exercise mocked RegisterNatives and UnregisterNatives rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 30s /tmp/m8-synthetic-jni-registration
+          echo 'M8_SYNTHETIC_JNI_REGISTRATION_ROLLBACK_HOST=PASS'
+          echo 'M8_REAL_ANDROID_ART_REGISTRATION_VERIFIED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'

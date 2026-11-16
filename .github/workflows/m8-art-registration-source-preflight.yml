@@ -1,0 +1,64 @@
+name: M8 Android ART registration source preflight
+
+on:
+  push:
+    branches: [feature/android-x11-display-input]
+    paths:
+      - 'scripts/m8-android-art-registration-probe.cpp'
+      - 'app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8ArtRegistrationTarget.java'
+      - 'app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8ArtRegistrationDiagnostic.java'
+      - '.github/workflows/m8-art-registration-source-preflight.yml'
+  pull_request:
+    paths:
+      - 'scripts/m8-android-art-registration-probe.cpp'
+      - 'app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8ArtRegistrationTarget.java'
+      - 'app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8ArtRegistrationDiagnostic.java'
+      - '.github/workflows/m8-art-registration-source-preflight.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-art-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+      - name: Install pinned Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager 'ndk;27.2.12479018'
+      - name: Cross-compile test-only ARM64 ART probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="$ANDROID_HOME/ndk/27.2.12479018"
+          BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$BIN/aarch64-linux-android28-clang++"
+          "$BIN/aarch64-linux-android28-clang++" \
+            -std=c++17 -shared -fPIC -O1 -Wall -Wextra -Werror \
+            -Wl,--no-undefined \
+            scripts/m8-android-art-registration-probe.cpp \
+            -o /tmp/libm8-art-registration-diagnostic.so
+          "$BIN/llvm-readelf" -h /tmp/libm8-art-registration-diagnostic.so \
+            | grep -Eq 'Machine:.*AArch64'
+          "$BIN/llvm-readelf" -Ws /tmp/libm8-art-registration-diagnostic.so \
+            > /tmp/m8-art-probe-symbols.txt
+          grep -Fq 'Java_io_github_jdawg867_anvildesk_m8_M8ArtRegistrationDiagnostic_runProbe' \
+            /tmp/m8-art-probe-symbols.txt
+          if grep -Eq '[[:space:]]JNI_OnLoad([[:space:]]|$)' /tmp/m8-art-probe-symbols.txt; then
+            echo 'STOP: ART diagnostic must not export JNI_OnLoad' >&2
+            exit 1
+          fi
+          if test -e app/src/main/jniLibs/arm64-v8a/libm8-art-registration-diagnostic.so; then
+            echo 'STOP: ART diagnostic library leaked into production source set' >&2
+            exit 1
+          fi
+          echo 'M8_ART_DIAGNOSTIC_ARM64_SOURCE_PREFLIGHT=PASS'
+          echo 'M8_ART_DIAGNOSTIC_APK_BUILT=false'
+          echo 'M8_ART_DIAGNOSTIC_DEVICE_EXECUTED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'

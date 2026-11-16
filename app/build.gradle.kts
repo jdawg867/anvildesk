@@ -6,6 +6,10 @@ val m8PackagingSpike = providers.gradleProperty("anvildeskM8PackagingSpike").orN
 val m8EmulatorTests = providers.gradleProperty("anvildeskM8EmulatorTests").orNull == "true"
 val m8ProductionCandidate = providers.gradleProperty("anvildeskM8ProductionCandidate").orNull == "true"
 val m8CompositeJniDiagnostic = providers.gradleProperty("anvildeskM8CompositeJniDiagnostic").orNull == "true"
+val m8ArtRegistrationDiagnostic = providers.gradleProperty("anvildeskM8ArtRegistrationDiagnostic").orNull == "true"
+require(!m8ArtRegistrationDiagnostic || (!m8CompositeJniDiagnostic && !m8PackagingSpike && !m8ProductionCandidate && !m8EmulatorTests)) {
+    "ART registration diagnostic requires a dedicated ARM64 test-only build"
+}
 require(!(m8PackagingSpike && m8ProductionCandidate)) { "M8 variants are mutually exclusive" }
 require(!m8CompositeJniDiagnostic || (!m8PackagingSpike && !m8ProductionCandidate && !m8EmulatorTests)) {
     "Composite JNI diagnostic requires a dedicated ARM64 test-only build"
@@ -81,6 +85,10 @@ android {
                 applicationIdSuffix = ".m8jnidiag"
                 versionNameSuffix = "-m8-jni-diagnostic"
             }
+            if (m8ArtRegistrationDiagnostic) {
+                applicationIdSuffix = ".m8artdiag"
+                versionNameSuffix = "-m8-art-diagnostic"
+            }
             if (developmentSigningComplete) {
                 signingConfig = signingConfigs.getByName("ciDevelopment")
             }
@@ -93,6 +101,12 @@ android {
         // Never add this path to the main source set or published APK.
         sourceSets.getByName("androidTest").jniLibs.srcDir(
             "build/generated/m8-composite-jni-diagnostic/androidTest/jniLibs"
+        )
+    }
+    if (m8ArtRegistrationDiagnostic) {
+        // JNI probe lives only inside the instrumentation APK, not the target.
+        sourceSets.getByName("androidTest").jniLibs.srcDir(
+            "build/generated/m8-art-registration-diagnostic/androidTest/jniLibs"
         )
     }
     if (m8PackagingSpike || m8ProductionCandidate) {

@@ -20,8 +20,8 @@ done
 AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
 [[ -x "$AAPT" ]] || { echo 'STOP: pinned aapt missing' >&2; exit 1; }
 meta="$(gh api "repos/$REPO/actions/runs/$RUN_ID" \
-  --jq '[.head_sha,.conclusion,.head_branch,.event] | @tsv')"
-[[ "$meta" == "$(printf '%s\tsuccess\tfeature/android-x11-display-input\tpull_request' "$EXPECTED_SHA")" ]] || {
+  --jq '[.head_sha,.conclusion,.head_branch,.event,.workflow_id] | @tsv')"
+[[ "$meta" == "$(printf '%s\tsuccess\tfeature/android-x11-display-input\tpull_request\t420367785' "$EXPECTED_SHA")" ]] || {
   echo 'STOP: CI run SHA/branch/conclusion/event mismatch' >&2
   exit 1
 }

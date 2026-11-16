@@ -34,7 +34,7 @@ jobs:
           test -n "$(grep -F -- 'M8_ART_DIAGNOSTIC_ARTIFACT_PREFLIGHT=PASS' scripts/run-m8-art-registration-samsung-instrumentation.sh)"
           test -n "$(grep -F -- 'SM-G766U' scripts/run-m8-art-registration-samsung-instrumentation.sh)"
           test -n "$(grep -F -- 'M8_NATIVE_LOAD_AUTHORIZED=false' scripts/run-m8-art-registration-samsung-instrumentation.sh)"
-          if grep -Eq 'adb.*(install|uninstall|am instrument)' scripts/verify-m8-art-registration-test-apks.sh; then
+          if grep -Ev '^[[:space:]]*(#|$)' scripts/verify-m8-art-registration-test-apks.sh | grep -Eq '(^|[[:space:];])adb([[:space:]]|$)'; then
             echo 'STOP: read-only verifier contains an ADB action' >&2
             exit 1
           fi

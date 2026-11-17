@@ -7,24 +7,29 @@ TEST='io.github.jdawg867.anvildesk.m8artdiag.test'
 LIB='lib/arm64-v8a/libm8-art-registration-diagnostic.so'
 CLASS='io.github.jdawg867.anvildesk.m8.M8ArtRegistrationInstrumentedTest'
 RUNNER='androidx.test.runner.AndroidJUnitRunner'
-RUN_ID='' SHA='' SERIAL='' EXECUTE=false
-usage() { echo "Usage: bash $0 --run-id RUN_ID --sha FULL_SHA [--run-on-device --serial SERIAL]"; }
+RUN_ID='' SHA='' SERIAL='' EXECUTE=false CHECK_DEVICE=false
+usage() { echo "Usage: bash $0 --run-id RUN_ID --sha FULL_SHA [--check-device --serial SERIAL | --run-on-device --serial SERIAL]"; }
 while (( $# )); do
   case "$1" in
     --run-id) RUN_ID="$2"; shift 2 ;;
     --sha) SHA="$2"; shift 2 ;;
     --serial) SERIAL="$2"; shift 2 ;;
     --run-on-device) EXECUTE=true; shift ;;
+    --check-device) CHECK_DEVICE=true; shift ;;
     *) usage >&2; exit 2 ;;
   esac
 done
 [[ "$RUN_ID" =~ ^[0-9]+$ && "$SHA" =~ ^[0-9a-f]{40}$ ]] || { usage >&2; exit 2; }
-if [[ "$EXECUTE" == true ]]; then
+if [[ "$EXECUTE" == true && "$CHECK_DEVICE" == true ]]; then
+  echo "STOP: choose read-only --check-device or explicit --run-on-device, not both" >&2
+  exit 2
+fi
+if [[ "$EXECUTE" == true || "$CHECK_DEVICE" == true ]]; then
   [[ -n "$SERIAL" && "$SERIAL" != *[[:space:]]* ]] || {
     echo 'STOP: explicit ADB serial required' >&2; exit 1;
   }
 else
-  [[ -z "$SERIAL" ]] || { echo 'STOP: serial requires device opt-in' >&2; exit 1; }
+  [[ -z "$SERIAL" ]] || { echo 'STOP: serial requires --check-device or --run-on-device' >&2; exit 1; }
 fi
 for tool in gh unzip readelf grep mktemp find base64; do
   command -v "$tool" >/dev/null || { echo "STOP: missing $tool" >&2; exit 1; }
@@ -39,7 +44,7 @@ gh api "repos/$REPO/contents/scripts/verify-m8-art-registration-test-apks.sh?ref
 bash "$tmp/verify.sh" "$RUN_ID" "$SHA" | tee "$tmp/preflight.log"
 grep -Fxq 'M8_ART_DIAGNOSTIC_ARTIFACT_PREFLIGHT=PASS' "$tmp/preflight.log"
 grep -Fxq 'M8_ART_DIAGNOSTIC_TEST_ONLY_PACKAGE_ISOLATION=PASS' "$tmp/preflight.log"
-if [[ "$EXECUTE" != true ]]; then
+if [[ "$EXECUTE" != true && "$CHECK_DEVICE" != true ]]; then
   echo 'M8_ART_DIAGNOSTIC_DEVICE_EXECUTED=false'
   echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
   exit 0
@@ -59,6 +64,12 @@ ABIS="$(adb -s "$SERIAL" shell getprop ro.product.cpu.abilist | tr -d '\r')"
 if adb -s "$SERIAL" shell pm list packages | tr -d '\r' \
     | grep -Eq "^package:($TARGET|$TEST)$"; then
   echo 'STOP: isolated diagnostic package already installed' >&2; exit 1
+fi
+if [[ "$CHECK_DEVICE" == true ]]; then
+  echo 'M8_ART_DIAGNOSTIC_DEVICE_READ_ONLY_PREFLIGHT=PASS'
+  echo 'M8_ART_DIAGNOSTIC_DEVICE_EXECUTED=false'
+  echo 'M8_NATIVE_LOAD_AUTHORIZED=false'
+  exit 0
 fi
 gh run download "$RUN_ID" --repo "$REPO" \
   --name m8-art-registration-test-apks-arm64 --dir "$tmp/apks"

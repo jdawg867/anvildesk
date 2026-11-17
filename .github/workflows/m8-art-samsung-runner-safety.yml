@@ -5,11 +5,13 @@ on:
     branches: [feature/android-x11-display-input]
     paths:
       - 'scripts/run-m8-art-registration-samsung-instrumentation.sh'
+      - 'scripts/test-m8-art-samsung-read-only-runner.sh'
       - 'scripts/verify-m8-art-registration-test-apks.sh'
       - '.github/workflows/m8-art-samsung-runner-safety.yml'
   pull_request:
     paths:
       - 'scripts/run-m8-art-registration-samsung-instrumentation.sh'
+      - 'scripts/test-m8-art-samsung-read-only-runner.sh'
       - 'scripts/verify-m8-art-registration-test-apks.sh'
       - '.github/workflows/m8-art-samsung-runner-safety.yml'
   workflow_dispatch:
@@ -23,6 +25,9 @@ jobs:
     timeout-minutes: 4
     steps:
       - uses: actions/checkout@v4
+      - name: Simulate read-only Samsung device gates without ADB
+        shell: bash
+        run: bash scripts/test-m8-art-samsung-read-only-runner.sh
       - name: Validate guards without Android or ADB
         shell: bash
         run: |

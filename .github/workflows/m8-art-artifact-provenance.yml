@@ -1,0 +1,51 @@
+name: M8 ART artifact read-only provenance acceptance
+
+on:
+  push:
+    branches: [feature/android-x11-display-input]
+    paths:
+      - 'scripts/verify-m8-art-registration-test-apks.sh'
+      - 'scripts/run-m8-art-registration-samsung-instrumentation.sh'
+      - '.github/workflows/m8-art-artifact-provenance.yml'
+  pull_request:
+    paths:
+      - 'scripts/verify-m8-art-registration-test-apks.sh'
+      - 'scripts/run-m8-art-registration-samsung-instrumentation.sh'
+      - '.github/workflows/m8-art-artifact-provenance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  read-only-artifact-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require pinned Android build-tools 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          "$SDKMANAGER" --install 'build-tools;36.0.0'
+      - name: Verify previously successful ART APK artifact without device access
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/verify-m8-art-registration-test-apks.sh
+          bash scripts/verify-m8-art-registration-test-apks.sh \
+            43915706427 e75d3d61877b7a9e7db65a2cab0303ef9f886da9 \
+            | tee /tmp/m8-art-read-only-verification.txt
+          grep -Fx 'M8_ART_DIAGNOSTIC_ARTIFACT_PREFLIGHT=PASS' \
+            /tmp/m8-art-read-only-verification.txt
+          grep -Fx 'M8_ART_DIAGNOSTIC_DEVICE_EXECUTED=false' \
+            /tmp/m8-art-read-only-verification.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' \
+            /tmp/m8-art-read-only-verification.txt

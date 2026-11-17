@@ -1,0 +1,31 @@
+name: M8 renderer lifecycle audit regressions
+
+on:
+  push:
+    branches:
+      - feature/android-x11-display-input
+    paths:
+      - scripts/audit-m8-renderer-lifecycle.py
+      - scripts/test-m8-renderer-lifecycle-audit.py
+      - .github/workflows/m8-renderer-lifecycle-audit.yml
+  pull_request:
+    paths:
+      - scripts/audit-m8-renderer-lifecycle.py
+      - scripts/test-m8-renderer-lifecycle-audit.py
+      - .github/workflows/m8-renderer-lifecycle-audit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-lifecycle-audit-regressions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile source and regression harness
+        run: |
+          python3 -m py_compile scripts/audit-m8-renderer-lifecycle.py scripts/test-m8-renderer-lifecycle-audit.py
+      - name: Verify fail-closed audit contract
+        run: python3 scripts/test-m8-renderer-lifecycle-audit.py

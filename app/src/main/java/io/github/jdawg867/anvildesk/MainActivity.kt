@@ -29,6 +29,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        val isM8PackagingSpike = packageName == "io.github.jdawg867.anvildesk.m8spike"
         val snapshot = DeviceInspector.snapshot()
         val density = resources.displayMetrics.density
         val padding = (24 * density).toInt()
@@ -43,6 +44,14 @@ class MainActivity : Activity() {
             text = "AnvilDesk"
             textSize = 30f
         })
+
+        if (isM8PackagingSpike) {
+            content.addView(TextView(this).apply {
+                text = "M8 ISOLATED NATIVE PACKAGING TEST — X11 server is not started. XFCE desktop is not available in this build. Do not use this app to validate desktop connectivity."
+                textSize = 16f
+                setPadding(0, (8 * density).toInt(), 0, (8 * density).toInt())
+            })
+        }
 
         content.addView(TextView(this).apply {
             text = "Trusted Linux runtime bootstrap for Android"

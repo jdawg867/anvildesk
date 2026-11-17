@@ -1,0 +1,262 @@
+// Deterministic host simulation of Android ALooper removal semantics.
+// No Android looper calls, JNI, production X11 library loading or device access.
+#include "m8-callback-token-registry.h"
+#include <chrono>
+#include <cstdint>
+#include <future>
+#include <functional>
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <thread>
+#include <unordered_map>
+#include <utility>
+
+using anvildesk_m8::CallbackTokenRegistry;
+static void require(bool ok, const char* why) { if (!ok) throw std::runtime_error(why); }
+
+// The queue owns a callable (not Android's raw void* userdata). This explicitly
+// DOES NOT prove the memory lifetime of raw Android userdata after removeFd.
+class FakeLooper {
+public:
+    using Callback = std::function<bool()>;
+    enum class RemoveResult { Removed, NotRegistered, Error };
+    void beginShutdown() { shuttingDown_ = true; }
+    void add(int fd, Callback cb) {
+        if (shuttingDown_) throw std::runtime_error("looper shutting down");
+        if (!entries_.emplace(fd, std::move(cb)).second)
+            throw std::runtime_error("duplicate descriptor");
+    }
+    Callback snapshot(int fd) const {
+        auto it = entries_.find(fd);
+        return it == entries_.end() ? Callback{} : it->second;
+    }
+    RemoveResult remove(int fd) {
+        if (failRemove_) return RemoveResult::Error;
+        return entries_.erase(fd) ? RemoveResult::Removed : RemoveResult::NotRegistered;
+    }
+    void failRemove(bool fail) { failRemove_ = fail; }
+    bool hasFd(int fd) const { return entries_.count(fd) != 0; }
+private:
+    bool shuttingDown_ = false;
+    bool failRemove_ = false;
+    std::unordered_map<int, Callback> entries_;
+};
+
+struct Registration {
+    std::shared_ptr<CallbackTokenRegistry::Context> context;
+    CallbackTokenRegistry::Token token;
+    int fd;
+    bool retired = false;
+};
+
+// The test captures a registry reference only while the registry is still
+// alive. A production adapter must provide its own independent registry lifetime.
+static FakeLooper::Callback callbackFor(CallbackTokenRegistry& registry,
+                                        CallbackTokenRegistry::Token token) {
+    return [&registry, token] {
+        auto lease = registry.enter(token);
+        return bool(lease);
+    };
+}
+
+static void testCallbackAfterRemoval() {
+    CallbackTokenRegistry registry;
+    FakeLooper looper;
+    auto ctx = std::make_shared<CallbackTokenRegistry::Context>();
+    auto token = registry.registerContext(ctx);
+    looper.add(41, callbackFor(registry, token));
+    auto queued = looper.snapshot(41); // delivery already queued
+    require(bool(queued), "missing queued callback");
+    require(looper.remove(41) == FakeLooper::RemoveResult::Removed, "remove failed");
+    registry.unregisterAndDrain(token);
+    require(!queued(), "late callback admitted to retired registration");
+}
+
+static void testDescriptorReuseAndGenerations() {
+    CallbackTokenRegistry registry;
+    FakeLooper looper;
+    auto old = registry.registerContext(std::make_shared<CallbackTokenRegistry::Context>());
+    looper.add(42, callbackFor(registry, old));
+    auto stale = looper.snapshot(42);
+    require(looper.remove(42) == FakeLooper::RemoveResult::Removed, "old fd not removed");
+    registry.unregisterAndDrain(old);
+    auto fresh = registry.registerContext(std::make_shared<CallbackTokenRegistry::Context>());
+    require(fresh != old, "token reused");
+    looper.add(42, callbackFor(registry, fresh)); // same OS descriptor number
+    require(!stale(), "old queued callback entered replacement context");
+    require(looper.snapshot(42)(), "replacement callback rejected");
+    require(looper.remove(42) == FakeLooper::RemoveResult::Removed, "fresh remove failed");
+    registry.unregisterAndDrain(fresh);
+}
+
+static void testRemovalErrorRetainsOwnershipUntilRetry() {
+    CallbackTokenRegistry registry;
+    FakeLooper looper;
+    auto ctx = std::make_shared<CallbackTokenRegistry::Context>();
+    std::weak_ptr<CallbackTokenRegistry::Context> weak = ctx;
+    auto token = registry.registerContext(ctx);
+    looper.add(43, callbackFor(registry, token));
+    ctx.reset();
+    looper.failRemove(true);
+    require(looper.remove(43) == FakeLooper::RemoveResult::Error, "expected remove failure");
+    require(looper.hasFd(43), "failed remove unexpectedly deregistered fd");
+    require(!weak.expired(), "failed removal dropped live context");
+    // Do not destroy registry/context on remove error. Retry with healthy looper.
+    looper.failRemove(false);
+    require(looper.remove(43) == FakeLooper::RemoveResult::Removed, "retry failed");
+    registry.unregisterAndDrain(token);
+    require(weak.expired(), "context survived completed drain");
+}
+
+static void testDuplicateFdCannotReplaceCallback() {
+    CallbackTokenRegistry registry;
+    FakeLooper looper;
+    const auto first = registry.registerContext(
+        std::make_shared<CallbackTokenRegistry::Context>());
+    const auto second = registry.registerContext(
+        std::make_shared<CallbackTokenRegistry::Context>());
+    looper.add(44, callbackFor(registry, first));
+    bool rejected = false;
+    try {
+        looper.add(44, callbackFor(registry, second));
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    require(rejected, "duplicate descriptor replaced active registration");
+    require(looper.snapshot(44)(), "original callback lost after duplicate add");
+    require(looper.remove(44) == FakeLooper::RemoveResult::Removed,
+            "failed to remove original registration");
+    registry.unregisterAndDrain(first);
+    require(!registry.enter(first), "old token admitted after cancellation");
+    // Failed duplicate registration must not cancel the unrelated context.
+    require(bool(registry.enter(second)), "rejected registration retired other token");
+    registry.unregisterAndDrain(second);
+}
+
+// End-to-end host ordering test: deregister before draining, reject a
+// callback captured before removal, and retain context until an active
+// callback releases its lease. This still does not model raw NDK userdata.
+static void testRemoveThenDrainWithInflightAndQueuedCallback() {
+    CallbackTokenRegistry registry;
+    FakeLooper looper;
+    auto context = std::make_shared<CallbackTokenRegistry::Context>();
+    std::weak_ptr<CallbackTokenRegistry::Context> weak = context;
+    const auto token = registry.registerContext(context);
+    looper.add(45, callbackFor(registry, token));
+    auto queued = looper.snapshot(45);
+    auto active = registry.enter(token);
+    require(bool(active), "inflight callback lease missing");
+    context.reset();
+    require(looper.remove(45) == FakeLooper::RemoveResult::Removed,
+            "could not deregister before drain");
+
+    std::promise<void> drained;
+    auto future = drained.get_future();
+    std::thread shutdown([&] {
+        registry.unregisterAndDrain(token);
+        drained.set_value();
+    });
+    // Rejection establishes that the closing state is visible, without
+    // guessing whether shutdown thread has been scheduled yet.
+    while (registry.enter(token)) std::this_thread::yield();
+    const bool waitedForInflight =
+        future.wait_for(std::chrono::milliseconds(20)) == std::future_status::timeout;
+    const bool staleRejected = !queued();
+    const bool contextRetained = !weak.expired();
+    active = {};
+    shutdown.join();
+    require(waitedForInflight, "drain finished while callback was active");
+    require(staleRejected, "queued callback admitted after shutdown");
+    require(contextRetained, "inflight callback context freed too soon");
+    require(weak.expired(), "context survived completed removal and drain");
+}
+
+static void testShutdownClosesAdmissionButAllowsRemoval() {
+    CallbackTokenRegistry registry;
+    FakeLooper looper;
+    const auto activeToken = registry.registerContext(
+        std::make_shared<CallbackTokenRegistry::Context>());
+    const auto refusedToken = registry.registerContext(
+        std::make_shared<CallbackTokenRegistry::Context>());
+    looper.add(46, callbackFor(registry, activeToken));
+    looper.beginShutdown();
+    looper.beginShutdown(); // idempotent gate
+    bool rejected = false;
+    try {
+        looper.add(47, callbackFor(registry, refusedToken));
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    require(rejected, "shutdown admitted new descriptor");
+    require(!looper.hasFd(47), "rejected descriptor was still installed");
+    require(looper.remove(46) == FakeLooper::RemoveResult::Removed,
+            "shutdown blocked removal of registered descriptor");
+    registry.unregisterAndDrain(activeToken);
+    registry.unregisterAndDrain(refusedToken);
+    require(!registry.enter(activeToken), "retired callback still admitted");
+}
+
+// A failed remove during teardown must preserve the old registration,
+// reject any new registration, and defer callback context destruction.
+// The fake queue owns callback closures; this is NOT Android raw userdata.
+static void testShutdownRemovalErrorRetryKeepsContext() {
+    CallbackTokenRegistry registry;
+    FakeLooper looper;
+    auto context = std::make_shared<CallbackTokenRegistry::Context>();
+    std::weak_ptr<CallbackTokenRegistry::Context> weak = context;
+    const auto token = registry.registerContext(context);
+    looper.add(48, callbackFor(registry, token));
+    auto queued = looper.snapshot(48);
+    context.reset();
+    looper.beginShutdown();
+    looper.failRemove(true);
+    require(looper.remove(48) == FakeLooper::RemoveResult::Error,
+            "remove error was not propagated");
+    require(looper.hasFd(48), "failed removal lost descriptor registration");
+    require(!weak.expired(), "context destroyed after failed remove");
+    require(queued(), "callback context was retired before removal succeeded");
+
+    bool newAddRejected = false;
+    try {
+        looper.add(49, callbackFor(registry, token));
+    } catch (const std::runtime_error&) {
+        newAddRejected = true;
+    }
+    require(newAddRejected, "failed removal reopened registration admission");
+    require(!looper.hasFd(49), "failed registration added a new descriptor");
+
+    looper.failRemove(false);
+    require(looper.remove(48) == FakeLooper::RemoveResult::Removed,
+            "failed removal could not be retried");
+    registry.unregisterAndDrain(token);
+    require(!queued(), "late callback admitted after successful drain");
+    require(weak.expired(), "callback context retained after removal and drain");
+    require(!looper.hasFd(48), "original fd remained registered");
+}
+
+static void testUnknownDescriptorRemoval() {
+    FakeLooper looper;
+    require(looper.remove(100) == FakeLooper::RemoveResult::NotRegistered,
+            "missing fd incorrectly reported removed");
+}
+
+int main() {
+    try {
+        testCallbackAfterRemoval();
+        testDescriptorReuseAndGenerations();
+        testRemovalErrorRetainsOwnershipUntilRetry();
+        testDuplicateFdCannotReplaceCallback();
+        testRemoveThenDrainWithInflightAndQueuedCallback();
+        testShutdownClosesAdmissionButAllowsRemoval();
+        testShutdownRemovalErrorRetryKeepsContext();
+        testUnknownDescriptorRemoval();
+        std::cout << "M8_FAKE_LOOPER_REMOVAL_MODEL=PASS\n"
+                  << "M8_ANDROID_RAW_USERDATA_LIFETIME_VERIFIED=false\n"
+                  << "M8_ANDROID_LOOPER_QUIESCENCE_VERIFIED=false\n"
+                  << "M8_NATIVE_LOAD_AUTHORIZED=false\n";
+    } catch (const std::exception& e) {
+        std::cerr << "FAIL: " << e.what() << '\n';
+        return 1;
+    }
+}

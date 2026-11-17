@@ -242,7 +242,9 @@ class XfceDesktopPlannerTest {
             val joined = invocation.command.joinToString(" ")
             assertFalse(joined.contains("--listen"))
             assertFalse(joined.contains("tcp"))
-            assertFalse(joined.contains("6000"))
+            // Randomized fixture directory names may contain "6000"; only a
+            // transport argument, not a host path, can request X11 TCP port 6000.
+            assertFalse(invocation.command.any { it == "6000" || it == ":6000" })
 
             try {
                 XfceDesktopPlanner.managedSession(

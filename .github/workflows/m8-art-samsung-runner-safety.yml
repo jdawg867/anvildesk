@@ -1,0 +1,52 @@
+name: M8 Samsung ART opt-in runner safety
+
+on:
+  push:
+    branches: [feature/android-x11-display-input]
+    paths:
+      - 'scripts/run-m8-art-registration-samsung-instrumentation.sh'
+      - 'scripts/test-m8-art-samsung-read-only-runner.sh'
+      - 'scripts/verify-m8-art-registration-test-apks.sh'
+      - '.github/workflows/m8-art-samsung-runner-safety.yml'
+  pull_request:
+    paths:
+      - 'scripts/run-m8-art-registration-samsung-instrumentation.sh'
+      - 'scripts/test-m8-art-samsung-read-only-runner.sh'
+      - 'scripts/verify-m8-art-registration-test-apks.sh'
+      - '.github/workflows/m8-art-samsung-runner-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  script-and-opt-in:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Simulate read-only Samsung device gates without ADB
+        shell: bash
+        run: bash scripts/test-m8-art-samsung-read-only-runner.sh
+      - name: Validate guards without Android or ADB
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/run-m8-art-registration-samsung-instrumentation.sh
+          bash -n scripts/verify-m8-art-registration-test-apks.sh
+          test -n "$(grep -F -- '--run-on-device' scripts/run-m8-art-registration-samsung-instrumentation.sh)"
+          test -n "$(grep -F -- '--serial' scripts/run-m8-art-registration-samsung-instrumentation.sh)"
+          test -n "$(grep -F -- 'M8_ART_DIAGNOSTIC_ARTIFACT_PREFLIGHT=PASS' scripts/run-m8-art-registration-samsung-instrumentation.sh)"
+          test -n "$(grep -F -- 'SM-G766U' scripts/run-m8-art-registration-samsung-instrumentation.sh)"
+          test -n "$(grep -F -- 'M8_NATIVE_LOAD_AUTHORIZED=false' scripts/run-m8-art-registration-samsung-instrumentation.sh)"
+          if grep -Ev '^[[:space:]]*(#|$)' scripts/verify-m8-art-registration-test-apks.sh | grep -Eq '(^|[[:space:];])adb([[:space:]]|$)'; then
+            echo 'STOP: read-only verifier contains an ADB action' >&2
+            exit 1
+          fi
+          if bash scripts/run-m8-art-registration-samsung-instrumentation.sh >/tmp/m8-unguarded.out 2>&1; then
+            echo 'STOP: runner accepted missing opt-in parameters' >&2
+            exit 1
+          fi
+          echo 'M8_ART_SAMSUNG_RUNNER_STATIC_GATES=PASS'
+          echo 'M8_ART_SAMSUNG_DEVICE_EXECUTED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'

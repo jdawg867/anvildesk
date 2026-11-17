@@ -1,0 +1,67 @@
+name: M8 opt-in ART registration APK isolation
+
+on:
+  push:
+    branches: [feature/android-x11-display-input]
+    paths:
+      - 'app/build.gradle.kts'
+      - 'scripts/build-m8-art-registration-test-apks.sh'
+      - 'scripts/m8-android-art-registration-probe.cpp'
+      - 'app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8ArtRegistrationTarget.java'
+      - 'app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8ArtRegistrationDiagnostic.java'
+      - 'app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8ArtRegistrationInstrumentedTest.java'
+      - '.github/workflows/m8-art-registration-apk-isolation.yml'
+  pull_request:
+    paths:
+      - 'app/build.gradle.kts'
+      - 'scripts/build-m8-art-registration-test-apks.sh'
+      - 'scripts/m8-android-art-registration-probe.cpp'
+      - 'app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8ArtRegistrationTarget.java'
+      - 'app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8ArtRegistrationDiagnostic.java'
+      - 'app/src/androidTest/java/io/github/jdawg867/anvildesk/m8/M8ArtRegistrationInstrumentedTest.java'
+      - '.github/workflows/m8-art-registration-apk-isolation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-only-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install pinned Android tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?Runner Android SDK required}"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          "$SDKMANAGER" --install \
+            'ndk;27.2.12479018' 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Build and inspect test-only ART registration APKs
+        env:
+          ANVILDESK_M8_ART_DIAGNOSTIC_APK_BUILD: 'true'
+        shell: bash
+        run: bash scripts/build-m8-art-registration-test-apks.sh
+      - name: Retain isolated test APK pair for controlled provenance checks
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-art-registration-test-apks-arm64
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          if-no-files-found: error
+          retention-days: 3
+      - name: Confirm no device execution or production loading
+        run: |
+          echo 'M8_ART_DIAGNOSTIC_DEVICE_EXECUTED=false'
+          echo 'M8_ART_DIAGNOSTIC_ART_EXECUTED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'

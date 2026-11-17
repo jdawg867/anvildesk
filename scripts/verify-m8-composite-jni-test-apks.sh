@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Read-only provenance and APK isolation check. NO adb, install, or code execution.
+REPO="jdawg867/anvildesk"
+RUN_ID="43570274527"
+EXPECTED_SHA="e671a0711742980b5c6df283220660aa93b59d57"
+ARTIFACT="m8-composite-jni-diagnostic-test-apks-arm64"
+ARTIFACT_ID="14104411442"
+ARTIFACT_DIGEST="sha256:4ff87bd54ef619d4a9643b2deda5fc7f44e629c5adba96f21fd84f800b6c50c8"
+TARGET_PACKAGE="io.github.jdawg867.anvildesk.m8jnidiag"
+TEST_PACKAGE="$TARGET_PACKAGE.test"
+LIB="lib/arm64-v8a/libm8-composite-jni-diagnostic.so"
+
+[[ "$#" -eq 1 && "$1" == "--verify-artifact" ]] || {
+  echo "Usage: $0 --verify-artifact (read-only; no device actions)" >&2
+  exit 2
+}
+for command in gh unzip readelf mktemp find grep; do
+  command -v "$command" >/dev/null || {
+    echo "STOP: missing dependency: $command" >&2
+    exit 1
+  }
+done
+# Prefer an explicit pinned aapt, then conventional SDK locations.
+# No SDK downloads or system modifications are performed.
+AAPT=""
+for sdk in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" \
+           "$HOME/Android/Sdk" "$HOME/Android/sdk" \
+           /opt/android-sdk /usr/local/lib/android/sdk /usr/lib/android-sdk; do
+  [[ -n "$sdk" ]] || continue
+  candidate="$sdk/build-tools/36.0.0/aapt"
+  if [[ -x "$candidate" ]]; then
+    AAPT="$candidate"
+    break
+  fi
+done
+if [[ -z "$AAPT" ]]; then
+  echo "STOP: Android SDK build-tools 36.0.0/aapt not found." >&2
+  echo "Set ANDROID_HOME to your installed SDK path or install build-tools;36.0.0." >&2
+  exit 1
+fi
+echo "M8_ANDROID_AAPT_FOUND=PASS"
+
+metadata="$(gh api "repos/$REPO/actions/runs/$RUN_ID" \
+  --jq '[.head_sha, .conclusion, .event] | @tsv')"
+[[ "$metadata" == "$(printf '%s\tsuccess\tpull_request' "$EXPECTED_SHA")" ]] || {
+  echo "STOP: workflow provenance/conclusion/event mismatch" >&2
+  exit 1
+}
+artifact_metadata="$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts" \
+  --jq ".artifacts[] | select(.name == \"$ARTIFACT\") | [.id, .digest, .expired, .workflow_run.head_sha] | @tsv")"
+[[ "$artifact_metadata" == "$(printf '%s\t%s\tfalse\t%s' "$ARTIFACT_ID" "$ARTIFACT_DIGEST" "$EXPECTED_SHA")" ]] || {
+  echo "STOP: artifact ID/digest/source mismatch or artifact expired" >&2
+  exit 1
+}
+workspace="$(mktemp -d)"
+trap 'rm -rf -- "$workspace"' EXIT
+gh run download "$RUN_ID" --repo "$REPO" --name "$ARTIFACT" --dir "$workspace"
+mapfile -d '' -t targets < <(find "$workspace" -type f -name 'app-debug.apk' -print0)
+mapfile -d '' -t tests < <(find "$workspace" -type f -name 'app-debug-androidTest.apk' -print0)
+[[ "${#targets[@]}" -eq 1 && "${#tests[@]}" -eq 1 ]] || {
+  echo "STOP: expected exactly one target and one instrumentation APK" >&2
+  exit 1
+}
+target="${targets[0]}"
+testapk="${tests[0]}"
+[[ ! -L "$target" && ! -L "$testapk" ]] || {
+  echo "STOP: refusing symlinked APK artifact" >&2
+  exit 1
+}
+unzip -tqq "$target"
+unzip -tqq "$testapk"
+target_badging="$("$AAPT" dump badging "$target")"
+test_badging="$("$AAPT" dump badging "$testapk")"
+grep -Fq "package: name='$TARGET_PACKAGE'" <<< "$target_badging" || {
+  echo "STOP: target diagnostic package mismatch" >&2
+  exit 1
+}
+grep -Fq "package: name='$TEST_PACKAGE'" <<< "$test_badging" || {
+  echo "STOP: instrumentation package mismatch" >&2
+  exit 1
+}
+if unzip -Z1 "$target" | grep -Fq 'libm8-composite-jni-diagnostic.so'; then
+  echo "STOP: diagnostic library found in target APK" >&2
+  exit 1
+fi
+test_entries="$(unzip -Z1 "$testapk")"
+grep -Fxq "$LIB" <<< "$test_entries" || {
+  echo "STOP: diagnostic library missing from instrumentation APK" >&2
+  exit 1
+}
+"$AAPT" dump xmltree "$testapk" AndroidManifest.xml > "$workspace/test-manifest.txt"
+grep -Fq 'E: instrumentation' "$workspace/test-manifest.txt" || {
+  echo "STOP: instrumentation declaration missing" >&2
+  exit 1
+}
+grep -Fq 'android:name(0x01010003)="androidx.test.runner.AndroidJUnitRunner"' \
+  "$workspace/test-manifest.txt" || {
+  echo "STOP: unexpected instrumentation runner" >&2
+  exit 1
+}
+grep -Fq "android:targetPackage(0x01010021)=\"$TARGET_PACKAGE\"" \
+  "$workspace/test-manifest.txt" || {
+  echo "STOP: instrumentation targets unexpected package" >&2
+  exit 1
+}
+unzip -p "$testapk" "$LIB" > "$workspace/isolated-diagnostic.so"
+readelf -h "$workspace/isolated-diagnostic.so" | grep -Eq 'Machine:.*AArch64' || {
+  echo "STOP: diagnostic shared library is not ARM64" >&2
+  exit 1
+}
+readelf -Ws "$workspace/isolated-diagnostic.so" > "$workspace/symbols.txt"
+grep -Fq 'Java_io_github_jdawg867_anvildesk_m8_M8CompositeJniDiagnostic_runProbe' \
+  "$workspace/symbols.txt" || {
+  echo "STOP: JNI entry symbol missing" >&2
+  exit 1
+}
+grep -Fq 'Java_io_github_jdawg867_anvildesk_m8_M8CompositeJniDiagnostic_runGlobalRefProbe' \
+  "$workspace/symbols.txt" || {
+  echo "STOP: real JNI global-reference diagnostic entry missing" >&2
+  exit 1
+}
+if grep -Fq 'JNI_OnLoad' "$workspace/symbols.txt"; then
+  echo "STOP: diagnostic exports JNI_OnLoad unexpectedly" >&2
+  exit 1
+fi
+echo 'M8_COMPOSITE_JNI_APK_ARTIFACT_PREFLIGHT=PASS'
+echo 'M8_COMPOSITE_JNI_TEST_ONLY_PACKAGE_ISOLATION=PASS'
+echo 'M8_COMPOSITE_JNI_DEVICE_EXECUTED=false'
+echo 'M8_NATIVE_LOAD_AUTHORIZED=false'

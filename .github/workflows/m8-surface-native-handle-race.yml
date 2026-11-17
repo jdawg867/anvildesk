@@ -1,0 +1,48 @@
+name: M8 Surface native handle race gate
+
+on:
+  push:
+    branches: [feature/android-x11-display-input]
+    paths:
+      - 'scripts/m8-renderer-handle-registry.h'
+      - 'scripts/m8-renderer-handle-session-retirement.h'
+      - 'scripts/m8-renderer-session-retirement.h'
+      - 'scripts/m8-renderer-jni-global-ref-retirement.h'
+      - 'scripts/test_m8_surface_native_handle_race.cpp'
+      - '.github/workflows/m8-surface-native-handle-race.yml'
+  pull_request:
+    paths:
+      - 'scripts/m8-renderer-handle-registry.h'
+      - 'scripts/m8-renderer-handle-session-retirement.h'
+      - 'scripts/m8-renderer-session-retirement.h'
+      - 'scripts/m8-renderer-jni-global-ref-retirement.h'
+      - 'scripts/test_m8_surface_native_handle_race.cpp'
+      - '.github/workflows/m8-surface-native-handle-race.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  surface-handle-race:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile isolated Surface-style race with sanitizers
+        run: |
+          c++ -std=c++17 -pthread -O1 -g -fno-omit-frame-pointer \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Wall -Wextra -Werror -pedantic \
+            scripts/test_m8_surface_native_handle_race.cpp \
+            -o /tmp/m8-surface-native-handle-race
+      - name: Verify stale generation rejection and drain before retirement
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            timeout 30s /tmp/m8-surface-native-handle-race
+          echo 'M8_SURFACE_HANDLE_RACE_HOST=PASS'
+          echo 'M8_SURFACE_NATIVE_JNI_INTEGRATION_VERIFIED=false'
+          echo 'M8_NATIVE_LOAD_AUTHORIZED=false'

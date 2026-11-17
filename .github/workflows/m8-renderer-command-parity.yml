@@ -1,0 +1,45 @@
+name: M8 inert Java/native command contract parity
+
+on:
+  push:
+    branches: [feature/android-x11-display-input]
+    paths:
+      - 'app/src/main/java/io/github/jdawg867/anvildesk/m8/M8RendererCommandContract.java'
+      - 'app/src/test/java/io/github/jdawg867/anvildesk/m8/M8RendererCommandContractTest.java'
+      - 'scripts/m8-renderer-command-boundary.h'
+      - 'scripts/verify-m8-renderer-command-parity.py'
+      - 'scripts/test-m8-renderer-command-parity.py'
+      - '.github/workflows/m8-renderer-command-parity.yml'
+  pull_request:
+    paths:
+      - 'app/src/main/java/io/github/jdawg867/anvildesk/m8/M8RendererCommandContract.java'
+      - 'app/src/test/java/io/github/jdawg867/anvildesk/m8/M8RendererCommandContractTest.java'
+      - 'scripts/m8-renderer-command-boundary.h'
+      - 'scripts/verify-m8-renderer-command-parity.py'
+      - 'scripts/test-m8-renderer-command-parity.py'
+      - '.github/workflows/m8-renderer-command-parity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile parity checks
+        run: python3 -m py_compile scripts/verify-m8-renderer-command-parity.py scripts/test-m8-renderer-command-parity.py
+      - name: Reject source ABI drift and native-loading injection
+        run: python3 scripts/test-m8-renderer-command-parity.py
+      - name: Validate Java/native constants and lease checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/verify-m8-renderer-command-parity.py \
+            app/src/main/java/io/github/jdawg867/anvildesk/m8/M8RendererCommandContract.java \
+            scripts/m8-renderer-command-boundary.h | tee /tmp/m8-command-contract.txt
+          grep -Fx 'M8_JAVA_NATIVE_COMMAND_SOURCE_PARITY=PASS' /tmp/m8-command-contract.txt
+          grep -Fx 'M8_REAL_JNI_COMMAND_DISPATCH_VERIFIED=false' /tmp/m8-command-contract.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' /tmp/m8-command-contract.txt

@@ -1,0 +1,51 @@
+name: M8 production native-load promotion block
+
+on:
+  push:
+    branches: [feature/android-x11-display-input]
+    paths:
+      - 'app/src/main/java/io/github/jdawg867/anvildesk/m8/M8NativeLoadingPolicy.java'
+      - 'app/src/main/java/io/github/jdawg867/anvildesk/m8/M8X11ProcessService.java'
+      - 'app/src/main/AndroidManifest.xml'
+      - 'scripts/verify-m8-secondary-process.py'
+      - 'scripts/verify-m8-native-promotion-block.py'
+      - 'scripts/test-m8-native-promotion-block.py'
+      - '.github/workflows/m8-native-promotion-block.yml'
+  pull_request:
+    paths:
+      - 'app/src/main/java/io/github/jdawg867/anvildesk/m8/M8NativeLoadingPolicy.java'
+      - 'app/src/main/java/io/github/jdawg867/anvildesk/m8/M8X11ProcessService.java'
+      - 'app/src/main/AndroidManifest.xml'
+      - 'scripts/verify-m8-secondary-process.py'
+      - 'scripts/verify-m8-native-promotion-block.py'
+      - 'scripts/test-m8-native-promotion-block.py'
+      - '.github/workflows/m8-native-promotion-block.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-promotion-block:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile static guard and mutation tests
+        run: |
+          python3 -m py_compile scripts/verify-m8-native-promotion-block.py scripts/test-m8-native-promotion-block.py
+      - name: Reject native promotion policy mutations
+        run: python3 scripts/test-m8-native-promotion-block.py
+      - name: Check actual production policy and disabled service
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/verify-m8-native-promotion-block.py \
+            app/src/main/AndroidManifest.xml \
+            app/src/main/java/io/github/jdawg867/anvildesk/m8/M8X11ProcessService.java \
+            app/src/main/java/io/github/jdawg867/anvildesk/m8/M8NativeLoadingPolicy.java \
+            scripts/verify-m8-secondary-process.py \
+            | tee /tmp/m8-promotion-block.txt
+          grep -Fx 'M8_PRODUCTION_NATIVE_POLICY_SEALED=PASS' /tmp/m8-promotion-block.txt
+          grep -Fx 'M8_SECONDARY_SERVICE_DISABLED=PASS' /tmp/m8-promotion-block.txt
+          grep -Fx 'M8_NATIVE_LOAD_AUTHORIZED=false' /tmp/m8-promotion-block.txt

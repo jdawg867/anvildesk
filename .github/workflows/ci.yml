@@ -373,7 +373,18 @@ jobs:
           set -euo pipefail
           # The pinned probe is a short-lived artifact. Do not fail future CI
           # after its retention expires; report the preflight as skipped.
-          expired="$(gh api repos/jdawg867/anvildesk/actions/artifacts/13716750305 --jq '.expired')"
+          # GitHub returns HTTP 404 after deleting an expired artifact.
+          # Only that known missing-artifact condition is an allowed skip;
+          # authentication, rate limits, and other failures remain fatal.
+          if ! expired="$(gh api repos/jdawg867/anvildesk/actions/artifacts/13716750305 --jq '.expired' 2>/tmp/m8-pinned-artifact-api.err)"; then
+            if grep -Fq 'HTTP 404' /tmp/m8-pinned-artifact-api.err; then
+              echo 'M8_ARTIFACT_PREFLIGHT_SKIPPED_EXPIRED_OR_REMOVED=true'
+              echo 'M8_ANDROID_DEVICE_PROBE_EXECUTED=false'
+              exit 0
+            fi
+            cat /tmp/m8-pinned-artifact-api.err >&2
+            exit 1
+          fi
           if [[ "$expired" == "true" ]]; then
             echo 'M8_ARTIFACT_PREFLIGHT_SKIPPED_EXPIRED=true'
             exit 0
